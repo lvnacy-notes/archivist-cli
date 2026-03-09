@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"window.autoDetectColorScheme": true,
+		"workbench.preferredDarkColorTheme": "MECHA.01",
+		"workbench.preferredLightColorTheme": "Simple Flat Dark"
+	}
+}
