@@ -325,6 +325,7 @@ archivist changelog --dry-run
 
 # Explicit subcommands
 archivist changelog general
+archivist changelog library
 archivist changelog publication
 archivist changelog story
 archivist changelog vault
@@ -349,6 +350,12 @@ archivist changelog general a1b2c3d
 #### `archivist changelog general`
 
 A clean, minimal changelog with no project-type-specific sections. Suitable for any project. Also invoked by bare `archivist changelog`.
+
+---
+
+#### `archivist changelog library`
+
+For library modules. Tracks works catalogued, authors, publications, and definitions in symmetry.
 
 ---
 

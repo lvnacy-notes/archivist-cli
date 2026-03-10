@@ -4,10 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "archivist"
-version = "1.0.0"
+version = "1.1.0"
 description = "CLI tool for managing Obsidian vault frontmatter and archive workflows"
 requires-python = ">=3.10"
-dependencies = ["pyyaml"]
+dependencies = [
+    "pyyaml",
+    "argcomplete",
+]
 
 [project.scripts]
 archivist = "archivist.cli:main"

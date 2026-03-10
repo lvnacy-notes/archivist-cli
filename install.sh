@@ -1,10 +1,29 @@
 #!/bin/sh
 #
 # Archivist installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/lvnacy-notes/archivist-cli/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/your-handle/archivist-cli/main/install.sh | bash
 #
 
 set -e
+
+cat << 'BANNER'
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                                                                     │
+  │   █████╗ ██████╗  ██████╗██╗  ██╗██╗██╗   ██╗██╗███████╗████████╗   │
+  │  ██╔══██╗██╔══██╗██╔════╝██║  ██║██║██║   ██║██║██╔════╝╚══██╔══╝   │
+  │  ███████║██████╔╝██║     ███████║██║██║   ██║██║███████╗   ██║      │
+  │  ██╔══██║██╔══██╗██║     ██╔══██║██║╚██╗ ██╔╝██║╚════██║   ██║      │
+  │  ██║  ██║██║  ██║╚██████╗██║  ██║██║ ╚████╔╝ ██║███████║   ██║      │
+  │  ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝  ╚═╝╚══════╝   ╚═╝      │
+  │                                                                     │
+  │                Obsidian vault & archive management                  │
+  │              frontmatter  ·  manifest  ·  changelog                 │
+  │                                                                     │
+  └─────────────────────────────────────────────────────────────────────┘
+
+BANNER
+
 
 REPO_URL="https://github.com/your-handle/archivist-cli.git"
 INSTALL_DIR="$HOME/tools/archivist-cli"
@@ -116,6 +135,51 @@ step "Installing git hooks"
 
 archivist hooks install
 info "Global hooks installed — all future clones will include them automatically."
+
+
+# ---------------------------------------------------------------------------
+# Shell completion
+# ---------------------------------------------------------------------------
+
+step "Setting up shell completion"
+
+SHELL_NAME=$(basename "$SHELL")
+RC_FILE=""
+
+case "$SHELL_NAME" in
+    zsh)  RC_FILE="$HOME/.zshrc" ;;
+    bash) RC_FILE="$HOME/.bashrc" ;;
+    fish)
+        FISH_CONF="$HOME/.config/fish/config.fish"
+        COMPLETION_LINE="register-python-argcomplete --shell fish archivist | source"
+        if ! grep -qF "archivist" "$FISH_CONF" 2>/dev/null; then
+            echo "" >> "$FISH_CONF"
+            echo "# archivist shell completion" >> "$FISH_CONF"
+            echo "$COMPLETION_LINE" >> "$FISH_CONF"
+            info "Shell completion added to $FISH_CONF"
+        else
+            info "Shell completion already configured in $FISH_CONF"
+        fi
+        RC_FILE=""
+        ;;
+    *)
+        warn "Unrecognized shell: $SHELL_NAME. Add completion manually:"
+        warn "  eval \"\$(register-python-argcomplete archivist)\""
+        ;;
+esac
+
+if [ -n "$RC_FILE" ]; then
+    COMPLETION_LINE="eval \"\$(register-python-argcomplete archivist)\""
+    if ! grep -qF "archivist" "$RC_FILE" 2>/dev/null; then
+        echo "" >> "$RC_FILE"
+        echo "# archivist shell completion" >> "$RC_FILE"
+        echo "$COMPLETION_LINE" >> "$RC_FILE"
+        info "Shell completion added to $RC_FILE"
+        warn "Run \`source $RC_FILE\` or open a new terminal to activate."
+    else
+        info "Shell completion already configured in $RC_FILE"
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Done

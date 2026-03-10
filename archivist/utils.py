@@ -23,7 +23,7 @@ APPARATUS_MODULE_TYPES = ["story", "publication", "library", "vault", "general"]
 MODULE_CHANGELOG_COMMAND = {
     "story":       "story",
     "publication": "publication",
-    "library":     "general",  # until a dedicated library changelog exists
+    "library":     "library",
     "vault":       "vault",
     "general":     "general",
 }
