@@ -54,6 +54,8 @@ echo "  Generate one now?"
 echo "    1. no — proceed with commit as-is"
 echo "    2. manifest — generate an edition manifest"
 echo "    3. changelog — generate a changelog"
+echo "    4. stage existing — add an existing file to staging"
+echo "    5. cancel — abort the commit"
 echo ""
 printf "  Enter number [1]: "
 read -r CHOICE </dev/tty
@@ -77,6 +79,21 @@ case "$CHOICE" in
             echo "  ✅ Changelog staged."
         fi
         ;;
+    4)
+        printf "  Path to file: "
+        read -r EXISTING_FILE </dev/tty
+        if [ -f "$EXISTING_FILE" ]; then
+            git add "$EXISTING_FILE"
+            echo "  ✅ Staged: $EXISTING_FILE"
+        else
+            echo "  ❌ File not found: $EXISTING_FILE"
+            echo "  Proceeding without staging."
+        fi
+        ;;
+    5)
+        echo "  Commit cancelled."
+        exit 1
+        ;;
     *)
         echo "  Proceeding without manifest or changelog."
         ;;
@@ -90,7 +107,8 @@ POST_COMMIT_HOOK = """\
 #
 # archivist post-commit hook
 # Always displays commit details. If .archivist is present, also backfills
-# the commit SHA into any manifest or changelog included in this commit.
+# the commit SHA into any manifest or changelog included in this commit,
+# then renames changelogs to include the short SHA in the filename.
 #
 
 # ---------------------------------------------------------------------------
@@ -123,7 +141,7 @@ if [ ! -f "$GIT_ROOT/.archivist" ]; then
     exit 0
 fi
 
-# Find manifest or changelog files in this commit that lack a commit-sha value
+# Find manifest or changelog files included in this commit
 FILES=$(git diff-tree --no-commit-id -r --name-only HEAD)
 
 BACKFILLED=0
@@ -132,17 +150,21 @@ for FILE in $FILES; do
 
     # Only process manifest or changelog markdown files
     case "$FILE" in
-        *-manifest.md|CHANGELOG-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md) ;;
+        *-manifest.md|*/CHANGELOG-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md|CHANGELOG-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md) ;;
         *) continue ;;
     esac
 
     [ -f "$FULL_PATH" ] || continue
 
-    # Only update if commit-sha frontmatter field is empty
-    grep -qE '^commit-sha:[[:space:]]*$' "$FULL_PATH" || continue
+    # Flag if commit-sha field is empty, whitespace-only, a placeholder,
+    # or anything that isn't a valid 7-character hex short SHA
+    CURRENT_SHA_VALUE=$(grep -E '^commit-sha:' "$FULL_PATH" | sed 's/^commit-sha:[[:space:]]*//')
+    if echo "$CURRENT_SHA_VALUE" | grep -qE '^[0-9a-f]{7,}$'; then
+        continue  # already backfilled — skip
+    fi
 
     # Backfill short SHA into frontmatter
-    sed -i.bak "s/^commit-sha:[[:space:]]*$/commit-sha: $COMMIT_SHORT/" "$FULL_PATH"
+    sed -i.bak "s/^commit-sha:[[:space:]]*.*/commit-sha: $COMMIT_SHORT/" "$FULL_PATH"
 
     # Backfill full SHA into body table
     sed -i.bak "s/| Commit SHA | \\[fill in after commit\\] |/| Commit SHA | $COMMIT_SHA |/" "$FULL_PATH"
@@ -151,11 +173,23 @@ for FILE in $FILES; do
     rm -f "${FULL_PATH}.bak"
 
     BACKFILLED=$((BACKFILLED + 1))
-    echo "   📋 archivist: SHA backfilled in $(basename "$FILE")"
+    BASENAME=$(basename "$FILE")
+    echo "   📋 archivist: SHA backfilled in $BASENAME"
+
+    # Rename changelogs to append short SHA — manifests keep their names
+    case "$FILE" in
+        */CHANGELOG-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md|CHANGELOG-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md)
+            DIR=$(dirname "$FULL_PATH")
+            STEM=$(basename "$FILE" .md)
+            NEW_PATH="$DIR/${STEM}-${COMMIT_SHORT}.md"
+            mv "$FULL_PATH" "$NEW_PATH"
+            echo "   📝 Renamed: $BASENAME → $(basename $NEW_PATH)"
+            ;;
+    esac
 done
 
 if [ "$BACKFILLED" -gt 0 ]; then
-    echo "   ✏️  $(basename "$FILE") updated — commit when ready."
+    echo "   ✏️  Updated file(s) left unstaged — commit when ready."
     echo ""
 fi
 

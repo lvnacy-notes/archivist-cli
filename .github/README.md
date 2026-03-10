@@ -21,7 +21,7 @@
 </div>
 <div align="center">
     •
-    <a href="https://github.com/ephemeralrogue">GitHub</a>
+    <a href="https://github.com/lvnacy">GitHub</a>
     •
     <a href="https://bsky.app/profile/lvnacy.xyz">Bluesky</a>
     •
@@ -79,6 +79,13 @@ Hooks are installed globally into `~/.git-templates/hooks/` and copied automatic
 ## Installation
 
 Archivist is designed to live in a permanent location outside any vault and be installed as an editable package via pip.
+
+### Quick install
+```bash
+curl -fsSL https://raw.githubusercontent.com/lvnacy-notes/archivist-cli/main/install.sh | bash
+```
+
+The script checks for Python 3.10+ and git, clones the repo to `~/tools/archivist-cli`, installs the package, and runs `archivist hooks install` automatically. The manual steps below are available if you prefer to inspect and run each step yourself:
 
 ```bash
 # Clone somewhere permanent

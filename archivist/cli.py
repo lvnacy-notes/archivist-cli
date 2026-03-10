@@ -23,6 +23,7 @@ Usage:
 """
 
 import argparse
+import importlib.metadata
 
 BANNER = r"""
   ┌─────────────────────────────────────────────────────────────────────┐
@@ -46,6 +47,15 @@ def build_parser() -> argparse.ArgumentParser:
         prog="archivist",
         description=BANNER + "  Bulk-manage YAML frontmatter and generate archive documents.\n  Scopes automatically to the current git repo or submodule root.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    try:
+        _version = importlib.metadata.version("archivist")
+    except importlib.metadata.PackageNotFoundError:
+        _version = "unknown"
+    parser.add_argument(
+        "--version", "-V",
+        action="version",
+        version=f"archivist {_version}",
     )
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
     subparsers.required = True

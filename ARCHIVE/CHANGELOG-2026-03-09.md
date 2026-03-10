@@ -4,11 +4,11 @@ category:
   - changelog
 log-scope: general
 modified: 2026-03-09
-commit-sha: 14d08f2
+commit-sha: 
 branch: feat/archivist
-files-modified: 1
-files-created: 27
-files-archived: 2
+files-modified: 5
+files-created: 2
+files-archived: 0
 tags:
   - archivist-cli
 ---
@@ -20,54 +20,40 @@ tags:
 | Field | Value |
 |-------|-------|
 | Date | 2026-03-09 |
-| Commit SHA | 14d08f25cd535fb6b58642baaac8fbe287a350fb |
-| Files Added | 27 |
-| Files Modified | 1 |
-| Files Archived | 2 |
+| Commit SHA | [fill in after commit] |
+| Files Added | 2 |
+| Files Modified | 5 |
+| Files Archived | 0 |
 
 ## Changes
 
 ### Files Modified
-- `.gitignore`: [description]
+- `README.md`: [description]
+- `CHANGELOG-2026-03-09.md`: this changelog
+- `archivist-cli.code-workspace`: [description]
+- `cli.py`: added `--version` flag
+- `install.py`:
+  - patched `post-commit` hook to properly backfill committed changelog with commit hash
+  - augmented `pre-commit` to provide more options if changelog is not staged
 
 ### New Files Created
-- `.archivist`: `archivist` config
-- `LICENSE`: MIT license file
-- `README.md`: 
-- `ASCII.txt`: `archivist` help banner
-- `lvnacy_banner.png`: [description]
-- `lvnacy_emblem_plain.png`: [description]
-- `CHANGELOG_TEMPLATE.md`: [description]
-- `archivist-cli.code-workspace`: [description]
-- `__init.py`: [description]
-- `cli.py`: [description]
-- `__init.py`: [description]
-- `__init.py`: [description]
-- `general.py`: [description]
-- `publication.py`: [description]
-- `story.py`: [description]
-- `vault.py`: [description]
-- `__init.py`: [description]
-- `add.py`: [description]
-- `apply_template.py`: [description]
-- `remove.py`: [description]
-- `rename.py`: [description]
-- `__init.py`: [description]
-- `install.py`: [description]
-- `init.py`: [description]
-- `manifest.py`: [description]
-- `utils.py`: [description]
-- `pyproject.toml`: [description]
+- `CHANGELOG-2026-03-09-14d08f2.md`: updated changelog from prior commit (14d08f2)
+- `install.sh`: one-line install script
 
 ### Files Removed / Archived
-- `LICENSE`: moved to `.github`
-- `README.md`: moved to `.github`
+- No files archived
 
 
 ## Summary
 
 ### Key Changes
-Initial commit of `archivist` version 1.0.0
+[Summary of what changed and why]
+
+### Decisions Made
+[Important decisions and rationale]
+
+### Next Steps
+- [ ] [Next task]
 
 ---
 
