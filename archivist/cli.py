@@ -25,6 +25,8 @@ Usage:
 import argparse
 import importlib.metadata
 
+from yaml import parser
+
 BANNER = r"""
   ┌─────────────────────────────────────────────────────────────────────┐
   │                                                                     │
@@ -206,6 +208,18 @@ def build_parser() -> argparse.ArgumentParser:
     vault_p.add_argument("--dry-run", action="store_true",
                          help="Preview without writing to disk")
 
+    # changelog library
+    lib_p = cl_sub.add_parser(
+        "library",
+        help="Generate a changelog for a library/catalog module",
+    )
+    lib_p.add_argument("commit_sha", nargs="?", default=None, metavar="COMMIT-SHA",
+                       help="Diff against a specific commit (default: staged changes)")
+    lib_p.add_argument("--path", default=None, metavar="PATH",
+                       help="File or directory to stage and scope the changelog to")
+    lib_p.add_argument("--dry-run", action="store_true",
+                       help="Preview without writing to disk")
+
     # -----------------------------------------------------------------------
     # hooks
     # -----------------------------------------------------------------------
@@ -237,6 +251,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main():
     parser = build_parser()
+    import argcomplete
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     if args.command == "init":
@@ -272,6 +288,8 @@ def main():
             from archivist.commands.changelog.story import run
         elif cl_command == "vault":
             from archivist.commands.changelog.vault import run
+        elif cl_command == "library":
+            from archivist.commands.changelog.library import run
         run(args)
 
     elif args.command == "hooks":
