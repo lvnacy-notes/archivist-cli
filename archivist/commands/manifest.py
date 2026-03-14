@@ -15,7 +15,9 @@ from pathlib import Path
 
 from archivist.utils import (
     ensure_staged,
-    extract_frontmatter,
+    extract_descriptions,
+    extract_user_content,
+    find_todays_manifest,
     get_db_path,
     get_file_class,
     get_file_frontmatter,
@@ -70,50 +72,30 @@ def _get_git_changes(scope_path: Path, commit_sha: str | None, git_root: Path) -
 
 
 # ---------------------------------------------------------------------------
-# Template
-# ---------------------------------------------------------------------------
-
-def _find_manifest_template(git_root: Path) -> Path:
-    archive_root = git_root / "ARCHIVE"
-    if not archive_root.is_dir():
-        print(f"Error: No ARCHIVE/ directory found at repo root ({git_root}).", file=sys.stderr)
-        sys.exit(1)
-
-    matches = list(archive_root.rglob("MANIFEST_TEMPLATE.md"))
-    if not matches:
-        print(f"Error: MANIFEST_TEMPLATE.md not found anywhere under {archive_root}.", file=sys.stderr)
-        sys.exit(1)
-
-    if len(matches) > 1:
-        matches.sort(key=lambda p: len(p.parts))
-        print(f"Warning: Multiple MANIFEST_TEMPLATE.md found; using {matches[0]}", file=sys.stderr)
-
-    return matches[0]
-
-
-# ---------------------------------------------------------------------------
 # Edition directory scanner
 # ---------------------------------------------------------------------------
 
 def _scan_edition_files(
     edition_path: Path,
-) -> tuple[int, list[Path], list[Path], str | None]:
+) -> tuple[list[Path], list[Path], list[Path], str | None]:
     """
     Walk the edition directory and return:
-        (total_file_count, article_files, edition_files, publish_date)
+        (all_files, column_files, edition_files, publish_date)
+    all_files excludes the manifest itself. Use len(all_files) for total
+    count and subtract classified files to get true asset count.
     """
     all_files = [
         p for p in edition_path.rglob("*")
         if p.is_file() and not p.name.endswith("-manifest.md")
     ]
 
-    article_files = []
+    column_files = []
     edition_files = []
 
     for f in all_files:
         cls = get_file_class(f)
-        if cls == "article":
-            article_files.append(f)
+        if cls == "column":
+            column_files.append(f)
         elif cls == "edition":
             edition_files.append(f)
 
@@ -130,7 +112,7 @@ def _scan_edition_files(
             raw = fm.get("publish-date")
             publish_date = str(raw) if raw is not None else None
 
-    return len(all_files), article_files, edition_files, publish_date
+    return all_files, column_files, edition_files, publish_date
 
 
 # ---------------------------------------------------------------------------
@@ -142,13 +124,12 @@ def _edition_wikilink(edition_name: str) -> str:
 
 
 def _build_manifest_frontmatter(
-    template_fm: dict,
     edition_name: str,
     commit_sha: str | None,
     num_modified: int,
     num_added: int,
     num_archived: int,
-    num_articles: int,
+    num_columns: int,
     num_editions: int,
     num_assets: int,
     volume: str | None,
@@ -161,33 +142,28 @@ def _build_manifest_frontmatter(
         "class":              "archive",
         "category":           ["manifest", "edition"],
         "modified":           today,
-        "updated":            today,
         "log-scope":          "edition",
         "edition":            wikilink,
         "commit-sha":         commit_sha or "",
         "volume":             volume or "",
         "publish-date":       publish_date or "",
-        "articles-published": num_articles + num_editions,
+        "columns-published": num_columns + num_editions,
         "assets-included":    num_assets,
         "files-modified":     num_modified,
         "files-created":      num_added,
         "files-archived":     num_archived,
     }
 
-    def get_value(key):
-        if key in auto:
-            return auto[key]
-        val = template_fm.get(key)
-        return val if val is not None else ""
-
     def render_field(key, value):
         if isinstance(value, list):
+            if not value:
+                return [f"{key}: []"]
             return [f"{key}:"] + [f"  - {item}" for item in value]
         return [f"{key}: {value}"]
 
     lines = ["---"]
-    for key in template_fm.keys():
-        lines.extend(render_field(key, get_value(key)))
+    for key, value in auto.items():
+        lines.extend(render_field(key, value))
     lines.append("---")
     return "\n".join(lines)
 
@@ -208,19 +184,31 @@ def _build_manifest_body(
     commit_sha: str | None,
     git_root: Path,
     num_assets: int,
-    num_articles: int,
+    num_columns: int,
     num_editions: int,
     volume: str | None,
     publish_date: str | None,
+    descriptions: dict,
+    user_content: str | None,
 ) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
     wikilink = _edition_wikilink(edition_name)
-    num_published = num_articles + num_editions
+    num_published = num_columns + num_editions
 
     def file_list(files, fallback):
         if not files:
             return f"- {fallback}\n"
-        return "".join(f"- `{_clean_filename(f)}`: [description]\n" for f in files)
+        lines = []
+        for f in files:
+            desc = descriptions.get(_clean_filename(f)) or descriptions.get(f) or "[description]"
+            if isinstance(desc, list):
+                lines.append(f"- `{_clean_filename(f)}`:")
+                for item in desc:
+                    lines.append(f"  - {item}")
+                lines.append("")
+            else:
+                lines.append(f"- `{_clean_filename(f)}`: {desc}")
+        return "\n".join(lines) + "\n"
 
     def rename_list(renames, fallback):
         if not renames:
@@ -233,16 +221,37 @@ def _build_manifest_body(
     def classify(filepath):
         return get_file_class(git_root / filepath) or "asset"
 
-    new_articles  = [f for f in changes["A"] if classify(f) == "article"]
+    new_columns  = [f for f in changes["A"] if classify(f) == "column"]
     new_editions  = [f for f in changes["A"] if classify(f) == "edition"]
     new_assets    = [f for f in changes["A"] if classify(f) == "asset"]
-    mod_articles  = [f for f in changes["M"] if classify(f) == "article"]
+    mod_columns  = [f for f in changes["M"] if classify(f) == "column"]
     mod_editions  = [f for f in changes["M"] if classify(f) == "edition"]
     mod_assets    = [f for f in changes["M"] if classify(f) == "asset"]
     moved         = changes["R"]
 
     volume_row   = f"| Volume | {volume} |" if volume else "| Volume | [fill in] |"
     pub_date_row = f"| Publish Date | {publish_date} |" if publish_date else "| Publish Date | [fill in] |"
+
+    user_block = user_content if user_content is not None else """
+## Content Checklist
+
+- [ ] All columns proofread
+- [ ] Images / assets included
+- [ ] Metadata frontmatter complete on each piece
+- [ ] Edition dashboard updated
+- [ ] Social media copy drafted
+- [ ] Archive entry created
+
+## Notes
+
+[Any edition-specific notes, decisions, or context go here.]
+
+---
+
+*Manifest auto-generated by Archivist CLI.*
+*See [Archivist CLI](https://github.com/lvnacy-notes/archivist-cli) for more information.*
+
+"""
 
     return f"""
 
@@ -264,14 +273,14 @@ def _build_manifest_body(
 ## Content
 
 ### Articles
-{file_list(new_articles, "No new articles")}
+{file_list(new_columns, "No new columns")}
 ### Edition Files
 {file_list(new_editions, "No new edition files")}
 
 ## Modified Content
 
 ### Articles
-{file_list(mod_articles, "No articles modified")}
+{file_list(mod_columns, "No columns modified")}
 ### Edition Files
 {file_list(mod_editions, "No edition files modified")}
 
@@ -288,22 +297,8 @@ def _build_manifest_body(
 ### Moved
 {rename_list(moved, "No files moved")}
 
-## Content Checklist
-
-- [ ] All articles proofread
-- [ ] Images / assets included
-- [ ] Metadata frontmatter complete on each piece
-- [ ] Edition dashboard updated
-- [ ] Social media copy drafted
-- [ ] Archive entry created
-
-## Notes
-
-[Any edition-specific notes, decisions, or context go here.]
-
----
-
-*Manifest auto-generated by archivist manifest — fill in bracketed fields before committing.*
+<!-- archivist:auto-end -->
+{user_block}
 """
 
 
@@ -409,12 +404,11 @@ def run(args: argparse.Namespace) -> None:
     edition_name = edition_path.name
     parent_dir = edition_path.parent
 
-    template_path = _find_manifest_template(git_root)
-    template_fm = extract_frontmatter(template_path.read_text())
-
-    num_assets, article_files, edition_files, publish_date = _scan_edition_files(edition_path)
-    num_articles = len(article_files)
+    all_edition_files, column_files, edition_files, publish_date = _scan_edition_files(edition_path)
+    num_columns = len(column_files)
     num_editions = len(edition_files)
+    classified   = set(column_files) | set(edition_files)
+    num_assets   = sum(1 for f in all_edition_files if f not in classified)
 
     # Ensure edition files are staged before diffing
     if not args.dry_run:
@@ -426,32 +420,46 @@ def run(args: argparse.Namespace) -> None:
     num_archived = len(changes["D"])
 
     frontmatter = _build_manifest_frontmatter(
-        template_fm, edition_name, args.commit_sha,
+        edition_name, args.commit_sha,
         num_modified, num_added, num_archived,
-        num_articles, num_editions, num_assets,
+        num_columns, num_editions, num_assets,
         args.volume, publish_date,
     )
+    output_path = parent_dir / f"{edition_name}-manifest.md"
+
+    existing = find_todays_manifest(parent_dir, edition_name)
+    descriptions = {}
+    user_content = None
+    if existing:
+        existing_text = existing.read_text()
+        descriptions = extract_descriptions(existing_text)
+        user_content = extract_user_content(existing_text)
+        output_path = existing
+
     body = _build_manifest_body(
         edition_name, changes, args.commit_sha,
         git_root, num_assets,
-        num_articles, num_editions,
+        num_columns, num_editions,
         args.volume, publish_date,
+        descriptions, user_content,
     )
     manifest_content = frontmatter + body
-    output_path = parent_dir / f"{edition_name}-manifest.md"
 
     if args.dry_run:
         print("=== DRY RUN — no file written ===\n")
         print(manifest_content)
         print(f"\n=== Would write to: {output_path} ===")
+        print(f"  Resolved edition : {edition_path}")
+        print(f"  Resolved git root: {git_root}")
     else:
         output_path.write_text(manifest_content)
-        print(f"✓ Manifest written to: {output_path}")
+        verb = "updated" if existing else "written"
+        print(f"✓ Manifest {verb} to: {output_path}")
 
     print(f"  Edition  : {_edition_wikilink(edition_name)}")
     print(f"  Scoped   : {edition_path}")
-    print(f"  Articles : {num_articles} (class: article) + {num_editions} (class: edition) = {num_articles + num_editions} published")
-    print(f"  Assets   : {num_assets} total files in edition dir")
+    print(f"  Articles : {num_columns} (class: column) + {num_editions} (class: edition) = {num_columns + num_editions} published")
+    print(f"  Assets   : {num_assets} assets ({len(all_edition_files)} total files in edition dir)")
     print(f"  Changes  : {num_added} added, {num_modified} modified, {num_archived} archived")
     if args.volume:
         print(f"  Volume   : {args.volume}")

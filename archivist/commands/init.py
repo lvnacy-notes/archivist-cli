@@ -83,6 +83,11 @@ def run(args: argparse.Namespace) -> None:
             "apparatus":   "true",
             "module-type": module_type,
         }
+        if module_type == "library":
+            print("\n  Works directory (relative to repo root).")
+            print("  This is where archivist scans for catalogued works.")
+            works_dir = input("  works-dir [works]: ").strip() or "works"
+            config["works-dir"] = works_dir
     else:
         config = {
             "apparatus":   "false",

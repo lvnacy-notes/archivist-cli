@@ -73,7 +73,7 @@ case "$CHOICE" in
         ;;
     3)
         archivist changelog
-        CHANGELOG_FILE=$(find "$GIT_ROOT" -name "CHANGELOG-*.md" -newer "$GIT_ROOT/.archivist" 2>/dev/null | head -1)
+        CHANGELOG_FILE=$(find "$GIT_ROOT/ARCHIVE" -name "CHANGELOG-*.md" -newer "$GIT_ROOT/.archivist" 2>/dev/null | head -1)
         if [ -n "$CHANGELOG_FILE" ]; then
             git add "$CHANGELOG_FILE"
             echo "  ✅ Changelog staged."
@@ -201,6 +201,54 @@ exit 0
 # Install logic
 # ---------------------------------------------------------------------------
 
+def _resolve_hooks_dir(repo_path: Path) -> Path:
+    """
+    Return the hooks directory for any repo or submodule worktree.
+
+    Regular repos:    repo_path/.git/hooks/
+    Submodules:       repo_path/.git is a file containing the real gitdir path,
+                      e.g. `gitdir: ../.git/modules/submodule-name`
+    """
+    git_entry = repo_path / ".git"
+    if git_entry.is_dir():
+        return git_entry / "hooks"
+
+    if git_entry.is_file():
+        # Read the gitdir pointer and resolve relative to the worktree
+        gitdir_line = git_entry.read_text(encoding="utf-8").strip()
+        if gitdir_line.startswith("gitdir:"):
+            gitdir = gitdir_line[len("gitdir:"):].strip()
+            resolved = (repo_path / gitdir).resolve()
+            return resolved / "hooks"
+
+    raise RuntimeError(f"Cannot resolve git hooks directory for: {repo_path}")
+
+
+def _get_submodule_paths(git_root: Path) -> list[Path]:
+    """
+    Return resolved paths for all initialized submodules in git_root.
+    """
+    import subprocess
+    try:
+        output = subprocess.check_output(
+            ["git", "submodule", "status"],
+            stderr=subprocess.PIPE, text=True, cwd=git_root,
+        )
+        paths = []
+        for line in output.strip().splitlines():
+            if not line:
+                continue
+            # Format: [+- ]<sha> <path> [(<description>)]
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                sub_path = (git_root / parts[1]).resolve()
+                if sub_path.exists():
+                    paths.append(sub_path)
+        return paths
+    except subprocess.CalledProcessError:
+        return []
+
+
 def _write_hook(hooks_dir: Path, name: str, content: str, dry_run: bool) -> None:
     hook_path = hooks_dir / name
 
@@ -234,7 +282,7 @@ def install_hooks(git_root: Path | None = None, dry_run: bool = False) -> None:
 
     # --- Local repo (sync) ---
     if git_root is not None:
-        local_hooks = git_root / ".git" / "hooks"
+        local_hooks = _resolve_hooks_dir(git_root)
         print(f"\n  Syncing to local repo → {local_hooks}")
         _write_hook(local_hooks, "pre-commit", PRE_COMMIT_HOOK, dry_run)
         _write_hook(local_hooks, "post-commit", POST_COMMIT_HOOK, dry_run)
@@ -260,6 +308,32 @@ def run_sync(args: argparse.Namespace) -> None:
     dry_run = getattr(args, "dry_run", False)
     if dry_run:
         print("=== DRY RUN — no files written ===")
+
     install_hooks(git_root=git_root, dry_run=dry_run)
-    if not dry_run:
-        print("\n  Hooks synced to current repo.")
+
+    # Detect submodules and offer to sync into each one
+    submodules = _get_submodule_paths(git_root)
+    if submodules:
+        print(f"\n  ⚠️  {len(submodules)} submodule(s) detected:")
+        for sub in submodules:
+            print(f"       {sub.relative_to(git_root)}")
+        answer = input("\n  Sync hooks into all submodules too? [y/N] ").strip().lower()
+        if answer == "y":
+            for sub in submodules:
+                try:
+                    hooks_dir = _resolve_hooks_dir(sub)
+                    rel = sub.relative_to(git_root)
+                    print(f"\n  Syncing → {rel}/.git/hooks/")
+                    _write_hook(hooks_dir, "pre-commit", PRE_COMMIT_HOOK, dry_run)
+                    _write_hook(hooks_dir, "post-commit", POST_COMMIT_HOOK, dry_run)
+                except RuntimeError as e:
+                    print(f"  ⚠️  Skipping {sub.name}: {e}", file=sys.stderr)
+            if not dry_run:
+                print("\n  Hooks synced to repo and all submodules.")
+        else:
+            print("  Skipping submodules.")
+            if not dry_run:
+                print("\n  Hooks synced to current repo only.")
+    else:
+        if not dry_run:
+            print("\n  Hooks synced to current repo.")
