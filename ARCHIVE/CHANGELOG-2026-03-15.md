@@ -5,9 +5,9 @@ category:
 log-scope: general
 modified: 2026-03-15
 commit-sha: 
-files-modified: 4
-files-created: 2
-files-archived: 3
+files-modified: 5
+files-created: 0
+files-archived: 0
 tags:
   - archivist-cli
 ---
@@ -20,34 +20,37 @@ tags:
 |-------|-------|
 | Date | 2026-03-15 |
 | Commit SHA | [fill in after commit] |
-| Files Added | 2 |
-| Files Modified | 4 |
-| Files Archived | 3 |
+| Files Added | 0 |
+| Files Modified | 5 |
+| Files Archived | 0 |
 
 ## Changes
 
 ### Files Modified
-- `.obsidian/appearance.json`: changed obsidian theme
-- `.obsidian/plugins/obsidian-style-settings/data.json`: [description]
-- `.obsidian/workspace.json`: [description]
-- `ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md` *(renamed from `CHANGELOG-2026-03-14.md`)*: post-commit backfill of commit hash
+- `.github/README.md`: updated to include new changelog auto-routing behavior
+- `AGENTS.md`: updated to include voice of Archivist
+- `archivist/cli.py`: new changelog auto-routing behavior
+- `pyproject.toml`: bumped version to 1.3.0
+- `ARCHIVE/CHANGELOG-2026-03-15-cce03dc.md` *(renamed from `CHANGELOG-2026-03-15.md`)*: backfilled commit hash of prior commit
 
 ### New Files Created
-- `.obsidian/themes/Velocity/manifest.json`: [description]
-- `.obsidian/themes/Velocity/theme.css`: [description]
+- No new files
 
 ### Files Removed / Archived
-- `.obsidian/themes/Kakano/manifest.json`: [description]
-- `.obsidian/themes/Kakano/theme.css`: [description]
-- `ARCHIVE/CHANGELOG-2026-03-13.md`: hold over from commit nonsense, removed
+- No files archived
 
 
 <!-- archivist:auto-end -->
 
 ## Notes
 
-- cleaned up changelogs
-- changed obsidian theme
+### Feature: `archivist changelog` auto routing
+
+`archivist changelog` reads module type in `.archivist` config and auto-routes to approptiate subcommand. Can be overridden by manually running subcommands.
+
+### Feature: Archivist voice in AGENTS
+
+All documentation will be migrated to use voice of Archivist. This includes help messages, manpages, README, and other such output.
 
 ---
 

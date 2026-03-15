@@ -271,24 +271,33 @@ def build_parser() -> argparse.ArgumentParser:
     # -----------------------------------------------------------------------
     cl_parser = subparsers.add_parser(
         "changelog",
-        help="Generate a changelog (default: general)",
+        help="Generate a changelog (auto-routes by module type if .archivist is present)",
         description=(
-            "This is your generic changelog generation command.\n"
-            "Generate a changelog scoped to the current git repo or submodule root.\n"
-            "Bare `archivist changelog` routes to the general subcommand. For\n"
-            "project-type-specific sections, use a named subcommand:\n"
+            "Run this bare and Archivist will check your .archivist config,\n"
+            "figure out what kind of project you're in, and run the right\n"
+            "subcommand without you having to think about it. You're welcome.\n\n"
+            "If there's no .archivist — or you've somehow managed to set an\n"
+            "unrecognized module type — it falls back to general. Also fine.\n\n"
+            "Note: --help is handled before any of that routing happens, so\n"
+            "this is always what you'll see here regardless of your config.\n"
+            "For subcommand-specific help, use:\n\n"
+            "    archivist changelog <subcommand> --help\n"
             + fmt_examples(
                 "archivist changelog",
-                "archivist changelog general a1b2c3d",
-                "archivist changelog story --dry-run",
-                "archivist changelog publication",
-                "archivist changelog vault",
+                "archivist changelog a1b2c3d",
+                "archivist changelog --dry-run",
+                "archivist changelog --path src/",
+                "archivist changelog publication --help",
             )
         ),
         formatter_class=ArchivistHelpFormatter,
     )
     cl_parser.add_argument("--dry-run", action="store_true",
                            help="Preview without writing to disk")
+    cl_parser.add_argument("commit_sha", nargs="?", default=None, metavar="COMMIT-SHA",
+                       help="Diff against a specific commit (default: staged changes)")
+    cl_parser.add_argument("--path", default=None, metavar="PATH",
+                        help="File or directory to stage and scope the diff to")
 
     cl_sub = cl_parser.add_subparsers(dest="cl_command", metavar="<subcommand>")
     cl_sub.required = False
@@ -298,9 +307,13 @@ def build_parser() -> argparse.ArgumentParser:
         "general",
         help="Generic changelog — same as bare `archivist changelog`",
         description=(
-            "This is no different that running 'archivist changelog'.\n"
-            "Generate a clean, minimal changelog with no project-type-specific\n"
-            "sections. Suitable for any project.\n"
+            "Clean and minimal. No project-type-specific sections, no opinions\n"
+            "about what kind of work you're doing. Just the diff, the table,\n"
+            "and fields for you to fill in.\n\n"
+            "Running `archivist changelog` bare does the same thing — unless\n"
+            "you have a .archivist config, in which case it routes to whatever\n"
+            "subcommand matches your module type. If you're explicitly calling\n"
+            "this, you either have no config or you're overriding it. Both fine.\n"
             + fmt_examples(
                 "archivist changelog general",
                 "archivist changelog general a1b2c3d",
@@ -525,12 +538,27 @@ def main():
 
     elif args.command == "changelog":
         cl_command = getattr(args, "cl_command", None)
-        if cl_command in (None, "general"):
+
+        # Auto-detect from .archivist when no subcommand was explicitly given
+        if cl_command is None:
+            from archivist.utils import get_repo_root, get_module_type, MODULE_CHANGELOG_COMMAND
+            git_root = get_repo_root()
+            module_type = get_module_type(git_root)
+            if module_type and module_type in MODULE_CHANGELOG_COMMAND:
+                cl_command = MODULE_CHANGELOG_COMMAND[module_type]
+                print(f"  → .archivist: module-type '{module_type}' → archivist changelog {cl_command}")
+            else:
+                cl_command = "general"
+
+        # Normalize attrs that subcommand run() functions expect but
+        # aren't present when routing through the bare `changelog` parser
+        if not hasattr(args, "commit_sha"):
+            args.commit_sha = None
+        if not hasattr(args, "path"):
+            args.path = None
+
+        if cl_command == "general":
             from archivist.commands.changelog.general import run
-            if not hasattr(args, "commit_sha"):
-                args.commit_sha = None
-            if not hasattr(args, "path"):
-                args.path = None
         elif cl_command == "publication":
             from archivist.commands.changelog.publication import run
         elif cl_command == "story":
@@ -539,6 +567,8 @@ def main():
             from archivist.commands.changelog.vault import run
         elif cl_command == "library":
             from archivist.commands.changelog.library import run
+        else:
+            from archivist.commands.changelog.general import run
         run(args)
 
     elif args.command == "reclassify":

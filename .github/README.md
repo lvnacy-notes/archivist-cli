@@ -313,11 +313,35 @@ Reports one of four outcomes: `inserted`, `already registered`, `already claimed
 
 ### `archivist changelog`
 
-Generates a `CHANGELOG-{date}.md` capturing project changes. The appropriate subcommand is determined by the module type declared in `.archivist`.
+Generates a `CHANGELOG-{date}.md` capturing project changes. Output is written to `ARCHIVE/`. Frontmatter fields are defined per subcommand — no template file required.
 
-Running `archivist changelog` without a subcommand generates a general changelog. Subcommands are available for specific module types.
+#### Auto-routing
 
-Output is written to `ARCHIVE/`. Frontmatter fields are defined per subcommand — no template file required.
+Running `archivist changelog` bare — no subcommand — reads `module-type` from `.archivist` and dispatches to the appropriate subcommand automatically. You ran `archivist init`, you set a module type, and now you don't have to think about it again.
+
+| `.archivist` module-type | Runs |
+|---|---|
+| `general` | `archivist changelog general` |
+| `story` | `archivist changelog story` |
+| `publication` | `archivist changelog publication` |
+| `library` | `archivist changelog library` |
+| `vault` | `archivist changelog vault` |
+
+No `.archivist` config, or an unrecognized module type? Falls back to `general`. It'll manage.
+
+`--dry-run`, `commit-sha`, and `--path` are all accepted by the bare invocation and passed through to whichever subcommand gets invoked:
+
+```bash
+archivist changelog --dry-run
+archivist changelog a1b2c3d
+archivist changelog --path ./chapters
+```
+
+> ⚠️ **`--help` does not auto-route.** Argparse handles it before any routing logic runs, so `archivist changelog --help` always shows the bare command help regardless of your `.archivist` config. For subcommand-specific help, be explicit:
+> ```bash
+> archivist changelog publication --help
+> archivist changelog story --help
+> ```
 
 If files are not staged, Archivist stages them automatically. Pass `--path` to scope staging and diffing to a specific file or directory; omit it to operate repo-wide.
 
@@ -331,11 +355,12 @@ Re-running a changelog command pre-commit updates the existing file rather than 
 The auto-generated block above the sentinel is always fully regenerated from the current staged state, so file counts, SHA, and the file list stay accurate no matter how many times you re-run.
 
 ```bash
-# General changelog — bare invocation
+# Auto-routes based on .archivist
 archivist changelog
 archivist changelog --dry-run
+archivist changelog a1b2c3d
 
-# Explicit subcommands
+# Explicit subcommands — always available, always route directly
 archivist changelog general
 archivist changelog library
 archivist changelog publication
@@ -345,7 +370,7 @@ archivist changelog vault
 # Scope to a specific path
 archivist changelog story --path ./chapters
 
-# Diff against a specific commit (subcommand required)
+# Diff against a specific commit (subcommand required for explicit routing)
 archivist changelog general a1b2c3d
 ```
 
@@ -353,7 +378,7 @@ archivist changelog general a1b2c3d
 
 | Argument | Required | Description |
 |---|---|---|
-| `commit-sha` | ❌ | Diff against a specific commit (subcommand required) |
+| `commit-sha` | ❌ | Diff against a specific commit |
 | `--path` | ❌ | File or directory to stage and scope the diff to |
 | `--dry-run` | ❌ | Print to stdout without writing to disk or DB |
 
