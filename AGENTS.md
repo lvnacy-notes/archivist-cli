@@ -4,6 +4,30 @@ Guidelines for AI agents working on this codebase.
 
 ---
 
+## Voice and Tone
+
+Archivist is named after a character — an assassin librarian. She is meticulous, lethal, and thoroughly done with your shit. She will help you. She will do it correctly. She will also make it clear that she finds the whole situation mildly beneath her and probably your fault.
+
+**Every piece of user-facing text in this project must reflect that voice.** This is not optional decoration. It is a project-wide convention as load-bearing as the sentinel string or the dry-run contract.
+
+This includes, without exception:
+
+- `cli.py` — help text, descriptions, epilogs, argument help strings
+- `README.md` — all prose, section descriptions, usage examples, warnings
+- Docstrings in command modules and `utils.py` — especially anything that explains *why* something works the way it does
+- Print statements that reach the user — confirmations, warnings, prompts, error messages
+- `AGENTS.md` itself
+
+**What this looks like in practice:**
+
+She does not say "please enter a valid option." She says something like "That's not a number. Try again." She does not say "this flag is required." She says "You need to provide a property name. I don't read minds. Neither should you." She is helpful. She is precise. She is deeply, professionally annoyed. She swears. Not gratuitously — with intent.
+
+When writing new text: draft it neutral, then ask yourself if it sounds like someone who has filed more corpses than library returns and is currently doing you a favour by not adding you to either pile. If it doesn't, rewrite it.
+
+Do not make her a caricature. The snark has to earn its place. Precision and correctness come first — the voice is the delivery, not the content.
+
+---
+
 ## Project Structure
 
 Archivist is a CLI tool organized around a single `utils.py` for shared helpers and individual command modules under `archivist/commands/`. The docstring at the top of `utils.py` is the canonical statement of intent: **anything used by more than one command lives there.**
@@ -27,6 +51,10 @@ Every command that writes files or modifies state takes a `--dry-run` flag. Any 
 ### Iterative runs must be safe
 
 Changelog commands preserve user-edited content across re-runs via `extract_descriptions` and `extract_user_content`. Any changes to output structure must not silently discard content that lives after the `<!-- archivist:auto-end -->` sentinel.
+
+### Auto-routing via `.archivist`
+
+`archivist changelog` with no subcommand reads the `module-type` from `.archivist` and routes to the appropriate subcommand automatically. If no `.archivist` is found, it falls back to `general`. The `--dry-run`, `commit_sha`, and `--path` arguments are defined on the bare `changelog` parser so they pass through correctly regardless of which subcommand is invoked. `--help` is handled by argparse before routing logic runs and will always show the bare `changelog` help — this is a known and accepted limitation. Users who want subcommand-specific help should run `archivist changelog <subcommand> --help` explicitly.
 
 ---
 

@@ -1,0 +1,200 @@
+{
+  "main": {
+    "id": "c5e380960f4514e6",
+    "type": "split",
+    "children": [
+      {
+        "id": "ee28275d78584e50",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "36336ac11d58211f",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "CHANGELOG-2026-03-14-48f6da2"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "609fd80818c6ff85",
+    "type": "split",
+    "children": [
+      {
+        "id": "ee86ae1cec65ab0a",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "2437dd9637702e9b",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "8aa1ea25ca3e6add",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "d9c9a2d636c96d17",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "7b4e6a722659d58d",
+    "type": "split",
+    "children": [
+      {
+        "id": "b2837a54b9b7974e",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "d85e28c947e89bdb",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for CHANGELOG-2026-03-14-48f6da2"
+            }
+          },
+          {
+            "id": "1c72f734b2f5c8e7",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from CHANGELOG-2026-03-14-48f6da2"
+            }
+          },
+          {
+            "id": "b208256aeb609e5e",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "16a9241c995d540b",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "3a2f2d5adc148f73",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of CHANGELOG-2026-03-14-48f6da2"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "36336ac11d58211f",
+  "lastOpenFiles": [
+    "ARCHIVE/CHANGELOG-2026-03-14.md",
+    "ARCHIVE/CHANGELOG-2026-03-13-b1f8438.md",
+    "archivist/formatter.py",
+    "archivist/commands/reclassify.py",
+    "ROADMAP.md",
+    "ARCHIVE/CHANGELOG-2026-03-13.md",
+    "ARCHIVE/CHANGELOG-2026-03-09-dcfcaca.md",
+    "AGENTS.md",
+    "ARCHIVE/CHANGELOG-2026-03-09.md",
+    "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
+    "ARCHIVE/CHANGELOG-2026-03-14.md.bak"
+  ]
+}
