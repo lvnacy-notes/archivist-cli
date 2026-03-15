@@ -58,12 +58,11 @@ This file tells Archivist what kind of project it is dealing with, which drives 
 
 ### `ARCHIVE/` directory
 
-Each Apparatus module maintains an `ARCHIVE/` directory at its root. Archivist searches this directory recursively for its templates:
+Each Apparatus module maintains an `ARCHIVE/` directory at its root. Archivist writes all generated changelogs directly into this directory. For publication modules, `ARCHIVE/` also serves as the search root for `MANIFEST_TEMPLATE.md` — the template that drives edition manifest output.
 
-- `CHANGELOG_TEMPLATE.md` — drives all changelog output
-- `MANIFEST_TEMPLATE.md` — drives edition manifest output (publication modules)
+- `MANIFEST_TEMPLATE.md` — drives edition manifest output (publication modules only)
 
-Field order in generated documents is determined entirely by the template. To add, remove, or reorder a field, edit the template — no code changes required.
+Field order in generated manifests is determined entirely by the template. To add, remove, or reorder a field, edit the template — no code changes required. Changelog frontmatter fields are defined in each subcommand module directly.
 
 ### Git hooks
 
@@ -135,7 +134,9 @@ If no `.archivist` config is found, it walks you through setup:
 3. Writes `.archivist` to the repo root
 4. Installs git hooks locally
 
-If `.archivist` already exists, it displays the current config and offers to update it or reinstall hooks. Safe to re-run at any time.
+If `.archivist` already exists, it displays the current config and offers to update it or reinstall hooks.
+
+> ⚠️ **Warning:** `archivist init` **will overwrite any existing git hooks** in the repo's `.git/hooks/` directory without a backup. If you have custom hooks, read every prompt carefully before confirming. Review your existing hooks first with `ls .git/hooks/` and preserve anything you need before proceeding.
 
 ```bash
 # Preview without writing anything
@@ -256,16 +257,18 @@ Scopes all git diff tracking to the edition directory only — staging the entir
 
 If the edition's files are not yet staged, Archivist stages them automatically before diffing.
 
+Re-running `archivist manifest` for the same edition updates the existing manifest in place. User content below the `<!-- archivist:auto-end -->` sentinel and any file descriptions you've written are preserved across re-runs — only the auto-generated block is regenerated.
+
 Auto-populated frontmatter fields:
 
 | Field | Source |
 |---|---|
 | `articles-published` | Count of `class: article` + `class: edition` files |
-| `assets-included` | Total file count in the edition directory |
+| `assets-included` | Count of files in the edition directory that are not classified as articles or edition files |
 | `files-created` / `files-modified` / `files-archived` | Scoped git diff counts |
 | `edition` | Quoted wikilink from directory name — `VOL-II-NO-27` → `"[[VOL II NO 27]]"` |
 | `publish-date` | Pulled from the `class: edition` file's frontmatter if present |
-| `class`, `category`, `log-scope`, `modified`, `updated`, `commit-sha` | Auto-set |
+| `class`, `category`, `log-scope`, `modified`, `commit-sha` | Auto-set |
 
 ```bash
 # From the edition's parent directory
@@ -314,9 +317,18 @@ Generates a `CHANGELOG-{date}.md` capturing project changes. The appropriate sub
 
 Running `archivist changelog` without a subcommand generates a general changelog. Subcommands are available for specific module types.
 
-Frontmatter is driven by `CHANGELOG_TEMPLATE.md`, searched recursively under `ARCHIVE/` — shallowest match wins. Output is written to the same directory the template lives in.
+Output is written to `ARCHIVE/`. Frontmatter fields are defined per subcommand — no template file required.
 
 If files are not staged, Archivist stages them automatically. Pass `--path` to scope staging and diffing to a specific file or directory; omit it to operate repo-wide.
+
+#### Iterative runs
+
+Re-running a changelog command pre-commit updates the existing file rather than creating a new one. Archivist preserves two things across re-runs:
+
+- **User content** — everything after the `<!-- archivist:auto-end -->` sentinel (your notes, checklist, any edits you've made below the auto-generated block) is carried forward untouched.
+- **Descriptions** — any file descriptions you've filled in (single-line or sub-bullet format) are extracted from the existing changelog and reinjected against the same filenames in the new output. Descriptions still showing `[description]` are not preserved — only ones you've actually written.
+
+The auto-generated block above the sentinel is always fully regenerated from the current staged state, so file counts, SHA, and the file list stay accurate no matter how many times you re-run.
 
 ```bash
 # General changelog — bare invocation
@@ -369,7 +381,7 @@ Auto-populated frontmatter fields:
 |---|---|
 | `editions-sha` | SHAs from the archive DB with `included_in = NULL` |
 | `files-created` / `files-modified` / `files-archived` | Repo-wide git diff counts |
-| `class`, `category`, `log-scope`, `modified`, `updated`, `commit-sha`, `tags` | Auto-set |
+| `class`, `category`, `log-scope`, `modified`, `commit-sha`, `tags` | Auto-set |
 
 **Archive DB:** `ARCHIVE/archive.db` — shared with `archivist manifest`.
 
@@ -492,7 +504,7 @@ Archivist is opinionated — built around the conventions of the LVNACY Apparatu
 
 ### Adding a new changelog type
 
-1. Create `archivist/commands/changelog/yourtype.py` with a `run(args)` function. Use any existing changelog module as a reference — they all follow the same structure: find template → ensure staged → diff → build frontmatter → build body → write.
+1. Create `archivist/commands/changelog/yourtype.py` with a `run(args)` function. Use any existing changelog module as a reference — they all follow the same structure: ensure staged → diff → build frontmatter → build body → write. Frontmatter fields are defined directly in the `auto` dict inside the frontmatter builder function.
 
 2. Add the subcommand parser to `build_parser()` in `cli.py`:
 
@@ -522,7 +534,9 @@ No reinstall needed — editable installs pick up changes immediately.
 
 ### Changing template conventions
 
-Archivist finds templates by recursively searching `ARCHIVE/` for a filename. To use a different directory structure or template name, update the relevant `_find_*_template()` function in the command module. Template field order is always respected — frontmatter is rendered by iterating template keys in order.
+Archivist finds the manifest template by recursively searching `ARCHIVE/` for `MANIFEST_TEMPLATE.md`. To use a different directory structure or template name, update `_find_manifest_template()` in `manifest.py`. Template field order is always respected — frontmatter is rendered by iterating template keys in order.
+
+Changelog frontmatter fields are not template-driven. To add, remove, or reorder fields for a changelog subcommand, edit the `auto` dict inside its `_build_frontmatter()` function directly.
 
 ---
 
@@ -538,7 +552,7 @@ If you want to adapt this for your own use — which is actively encouraged — 
 
 ## Changelog
 
-Archivist uses Archivist. Generated changelogs live in [`ARCHIVE/CHANGELOG/`](./ARCHIVE/CHANGELOG/).
+Archivist uses Archivist. Generated changelogs live in [`ARCHIVE/`](./ARCHIVE/).
 
 ---
 
