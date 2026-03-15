@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "ARCHIVE/CHANGELOG-2026-03-13-b1f8438.md",
+                "file": "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "CHANGELOG-2026-03-13-b1f8438"
+              "title": "CHANGELOG-2026-03-14-48f6da2"
             }
           }
         ]
@@ -94,7 +94,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "ARCHIVE/CHANGELOG-2026-03-13-b1f8438.md",
+                "file": "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +104,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Backlinks for CHANGELOG-2026-03-13-b1f8438"
+              "title": "Backlinks for CHANGELOG-2026-03-14-48f6da2"
             }
           },
           {
@@ -113,12 +113,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "ARCHIVE/CHANGELOG-2026-03-13-b1f8438.md",
+                "file": "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links from CHANGELOG-2026-03-13-b1f8438"
+              "title": "Outgoing links from CHANGELOG-2026-03-14-48f6da2"
             }
           },
           {
@@ -156,13 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "ARCHIVE/CHANGELOG-2026-03-13-b1f8438.md",
+                "file": "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Outline of CHANGELOG-2026-03-13-b1f8438"
+              "title": "Outline of CHANGELOG-2026-03-14-48f6da2"
             }
           }
         ]
@@ -186,8 +186,15 @@
   "active": "36336ac11d58211f",
   "lastOpenFiles": [
     "ARCHIVE/CHANGELOG-2026-03-14.md",
-    "ARCHIVE/CHANGELOG-2026-03-09.md",
+    "ARCHIVE/CHANGELOG-2026-03-13-b1f8438.md",
+    "archivist/formatter.py",
+    "archivist/commands/reclassify.py",
+    "ROADMAP.md",
     "ARCHIVE/CHANGELOG-2026-03-13.md",
-    "ARCHIVE/CHANGELOG-2026-03-13-b1f8438.md"
+    "ARCHIVE/CHANGELOG-2026-03-09-dcfcaca.md",
+    "AGENTS.md",
+    "ARCHIVE/CHANGELOG-2026-03-09.md",
+    "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
+    "ARCHIVE/CHANGELOG-2026-03-14.md.bak"
   ]
 }

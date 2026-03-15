@@ -1,3 +1,5 @@
 {
-  "kakano-style@@theme-setting-predefinedBaseColor": "theme-setting-baseColorPreset-waiporoporo"
+  "kakano-style@@theme-setting-predefinedBaseColor": "theme-setting-baseColorPreset-waiporoporo",
+  "obsidian-velocity@@theme-paint-light": "jetblue",
+  "obsidian-velocity@@line-height-normal": "1.6"
 }
