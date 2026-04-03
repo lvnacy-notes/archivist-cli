@@ -29,6 +29,8 @@ from archivist.utils import (
     get_repo_root,
     reassign_deletions,
     rename_suspicion,
+    report_changes,
+    write_changelog,
 )
 
 
@@ -329,7 +331,9 @@ def _build_body(
 
 def run(args: argparse.Namespace) -> None:
     git_root = get_repo_root()
+    print(f"  📁 Repo root : {git_root}")
     output_dir = _find_output_dir(git_root)
+    print(f"  📁 Output dir: {output_dir}")
 
     if not args.dry_run:
         ensure_staged(None, git_root)
@@ -341,6 +345,7 @@ def run(args: argparse.Namespace) -> None:
     all_renames = changes["R"] + dir_renamed_files
     renames = {new: old for old, new in all_renames}
     modified = changes["M"] + list(renames.keys())
+    report_changes(changes, modified, true_deleted)
 
     num_modified = len(modified)
     num_added = len(changes["A"])
@@ -353,10 +358,13 @@ def run(args: argparse.Namespace) -> None:
     descriptions = {}
     user_content = None
     if existing:
+        print(f"  🔍 Found existing changelog: {existing.name} — updating in place")
         existing_text = existing.read_text()
         descriptions = extract_descriptions(existing_text)
         user_content = extract_user_content(existing_text)
         output_path = existing
+    else:
+        print(f"  🆕 No existing changelog found — creating {output_path.name}")
 
     frontmatter = _build_frontmatter(
         args.commit_sha,
@@ -374,9 +382,7 @@ def run(args: argparse.Namespace) -> None:
         print(changelog_content)
         print(f"\n=== Would write to: {output_path} ===")
     else:
-        output_path.write_text(changelog_content)
-        verb = "updated" if existing else "written"
-        print(f"✓ Changelog {verb}: {output_path}")
+        write_changelog(output_path, changelog_content, existing=bool(existing))
 
     print(f"  Project    : {_get_project_name(git_root)}")
     print(f"  Changes    : {num_added} added, {num_modified} modified, {num_archived} archived")

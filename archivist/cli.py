@@ -204,19 +204,24 @@ def build_parser() -> argparse.ArgumentParser:
     # frontmatter apply-template
     tpl_p = fm_sub.add_parser(
         "apply-template",
-        help="Apply a frontmatter template to all notes of a matching class",
+        help="Apply a frontmatter template to notes matching specified criteria",
         description=(
-            "Name a class, apply a template. Simple, but this is how it works:\n"
-            "Applies a frontmatter template to all notes whose class property matches.\n"
+            "Provide a template note with the properties and structure you want,\n"
+            "and provide the criteria for which notes it applies to. I'll handle the rest.\n\n"
+            "The template is the authority. The template is the law. You built it.\n\n"
+            "Filter by any combination of class, path, and tag — all provided\n"
+            "filters must match (AND logic). At least one is required. I am not\n"
+            "rewriting your entire fucking vault because you forgot to be specific.\n\n"
             "For each matching note:\n\n"
             "  · Adds properties from the template that the note is missing\n"
             "  · Leaves existing values alone\n"
             "  · Removes properties the template doesn't include\n"
             "  · Reorders everything to match the template\n\n"
-            "The template is the authority. It's the boss. YOU make the template.\n"
-            "Argue with the template, or yourself, not with me, or with this command.\n"
             + fmt_examples(
                 "archivist frontmatter apply-template -t template.md -c character",
+                "archivist frontmatter apply-template -t template.md --path content/essays",
+                "archivist frontmatter apply-template -t template.md --tag draft",
+                "archivist frontmatter apply-template -t template.md -c article --tag draft --path content/",
                 "archivist frontmatter apply-template -t template.md -c location --dry-run",
             )
         ),
@@ -224,11 +229,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tpl_p.add_argument("-t", "--template", required=True, metavar="FILE",
                        help="Path to the template markdown file")
-    tpl_p.add_argument("-c", "--class", dest="note_class", required=True,
-                       metavar="CLASS",
+    tpl_p.add_argument("-c", "--class", dest="note_class", default=None, metavar="CLASS",
                        help="Class value to match (e.g. 'character', 'location')")
     tpl_p.add_argument("--class-property", default="class", metavar="PROP",
                        help="Frontmatter property used to identify the class (default: class)")
+    tpl_p.add_argument("--path", default=None, metavar="PATH",
+                       help="Limit search to this directory (relative to repo root)")
+    tpl_p.add_argument("--tag", default=None, metavar="TAG",
+                       help="Match notes that carry this tag in their frontmatter")
     tpl_p.add_argument("--dry-run", action="store_true",
                        help="Preview changes without writing to disk")
 

@@ -33,6 +33,8 @@ from archivist.utils import (
     init_db,
     reassign_deletions,
     rename_suspicion,
+    report_changes,
+    write_changelog,
 )
 
 
@@ -316,7 +318,9 @@ def _build_changelog_body(
 
 def run(args: argparse.Namespace) -> None:
     git_root = get_repo_root()
+    print(f"  📁 Repo root : {git_root}")
     output_dir = _find_output_dir(git_root)
+    print(f"  📁 Output dir: {output_dir}")
     today = datetime.now().strftime("%Y-%m-%d")
 
     # Resolve existing changelog first — needed for iterative SHA query
@@ -343,6 +347,7 @@ def run(args: argparse.Namespace) -> None:
     all_renames = changes["R"] + dir_renamed_files
     renames = {new: old for old, new in all_renames}
     modified = changes["M"] + list(renames.keys())
+    report_changes(changes, modified, true_deleted)
 
     num_modified = len(modified)
     num_added = len(remaining_added)
@@ -351,9 +356,13 @@ def run(args: argparse.Namespace) -> None:
     descriptions = {}
     user_content = None
     if existing:
+        print(f"  🔍 Found existing changelog: {existing.name} — updating in place")
         existing_text = existing.read_text()
         descriptions = extract_descriptions(existing_text)
         user_content = extract_user_content(existing_text)
+        output_path = existing
+    else:
+        print(f"  🆕 No existing changelog found — creating {output_path.name}")
 
     frontmatter = _build_changelog_frontmatter(
         args.commit_sha, edition_shas,
@@ -373,10 +382,8 @@ def run(args: argparse.Namespace) -> None:
         print(f"\n=== Would write to: {output_path} ===")
         print(f"  Would mark {len(edition_shas)} SHA(s) as included in DB")
     else:
-        output_path.write_text(changelog_content)
+        write_changelog(output_path, changelog_content, existing=bool(existing))
         _mark_shas_included(git_root, edition_shas, str(output_path))
-        verb = "updated" if existing else "written"
-        print(f"✓ Changelog {verb}: {output_path}")
         if edition_shas:
             print(f"✓ {len(edition_shas)} SHA(s) marked as included in archive DB")
 

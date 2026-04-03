@@ -209,3 +209,4 @@ __marimo__/
 # System shit
 .DS_Store
 */.DS_Store
+.agent/
