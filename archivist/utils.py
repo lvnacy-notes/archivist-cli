@@ -304,6 +304,8 @@ def ensure_staged(
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            staged_files = result.stdout.strip().splitlines()
+            print(f"  ✔  Staging check passed — {len(staged_files)} file(s) staged")
 
     except subprocess.CalledProcessError as e:
         print(f"❌  Git error while staging files: {e}", file=sys.stderr)
@@ -473,3 +475,52 @@ def extract_user_content(existing_content: str) -> str | None:
     if ARCHIVIST_AUTO_END not in existing_content:
         return None
     return existing_content.split(ARCHIVIST_AUTO_END, 1)[1]
+
+
+# ---------------------------------------------------------------------------
+# Output helpers (shared by all changelog and manifest subcommands)
+# ---------------------------------------------------------------------------
+
+def report_changes(changes: dict, modified: list, true_deleted: list) -> None:
+    """
+    Print a human-readable summary of the staged diff.
+    Called by every changelog subcommand after _get_git_changes() resolves.
+    """
+    total = len(changes["A"]) + len(modified) + len(true_deleted)
+    if total == 0:
+        print("  ⚠️  No staged changes found in the diff — changelog will be empty")
+    else:
+        print(
+            f"  📋 Diff resolved: "
+            f"{len(changes['A'])} added  |  "
+            f"{len(modified)} modified  |  "
+            f"{len(true_deleted)} archived"
+        )
+    if changes["R"]:
+        print(f"     ↳ {len(changes['R'])} rename(s) detected")
+
+
+def write_changelog(output_path: Path, content: str, existing: bool) -> None:
+    """
+    Write changelog content to disk with before/after messaging and safe
+    error handling.
+
+    - Prints the target path before attempting the write so a failure can
+      be located immediately.
+    - Wraps the write in a try/except so an OSError doesn't produce a raw
+      traceback; exits with a clear message instead.
+    - Prints a ✓ confirmation with the correct verb (written vs updated)
+      only after a successful write.
+
+    Call this instead of output_path.write_text() in every changelog and
+    manifest subcommand.
+    """
+    verb = "Updating" if existing else "Creating"
+    print(f"  ✏️  {verb}: {output_path}")
+    try:
+        output_path.write_text(content, encoding="utf-8")
+    except OSError as e:
+        print(f"❌  Failed to write changelog: {e}", file=sys.stderr)
+        sys.exit(1)
+    verb_past = "updated" if existing else "written"
+    print(f"✓ Changelog {verb_past}: {output_path}")

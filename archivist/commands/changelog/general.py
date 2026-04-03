@@ -31,6 +31,8 @@ from archivist.utils import (
     prompt_out_of_scope_changes,
     reassign_deletions,
     rename_suspicion,
+    report_changes,
+    write_changelog,
 )
 
 
@@ -228,7 +230,10 @@ def _build_body(
 
 def run(args: argparse.Namespace) -> None:
     git_root = get_repo_root()
+    print(f"  📁 Repo root : {git_root}")
+
     output_dir = _find_output_dir(git_root)
+    print(f"  📁 Output dir: {output_dir}")
 
     # Resolve --path if provided
     scope_path = Path(args.path).resolve() if getattr(args, "path", None) else None
@@ -252,27 +257,30 @@ def run(args: argparse.Namespace) -> None:
     renames = {new: old for old, new in all_renames}
     modified = changes["M"] + list(renames.keys())
 
-    num_modified = len(modified)
-    num_added = len(changes["A"])
-    num_archived = len(true_deleted)
+    report_changes(changes, modified, true_deleted)
 
     today = datetime.now().strftime("%Y-%m-%d")
     output_path = output_dir / f"CHANGELOG-{today}.md"
 
-    # Check for an existing changelog from today and preserve user content
+    # Check for an existing changelog and preserve user content
     existing = find_active_changelog(output_dir)
     descriptions = {}
     user_content = None
     if existing:
+        print(f"  🔍 Found existing changelog: {existing.name} — updating in place")
         existing_text = existing.read_text()
         descriptions = extract_descriptions(existing_text)
         user_content = extract_user_content(existing_text)
-        output_path = existing  # update in place
+        output_path = existing
+    else:
+        print(f"  🆕 No existing changelog found — creating {output_path.name}")
 
     frontmatter = _build_frontmatter(
         args.commit_sha,
-        num_modified, num_added, num_archived,
-        git_root,
+        num_modified=len(modified),
+        num_added=len(changes["A"]),
+        num_archived=len(true_deleted),
+        git_root=git_root,
     )
     body = _build_body(
         changes, true_deleted, renames, modified,
@@ -285,12 +293,10 @@ def run(args: argparse.Namespace) -> None:
         print(changelog_content)
         print(f"\n=== Would write to: {output_path} ===")
     else:
-        output_path.write_text(changelog_content)
-        verb = "updated" if existing else "written"
-        print(f"✓ Changelog {verb}: {output_path}")
+        write_changelog(output_path, changelog_content, existing=bool(existing))
 
     print(f"  Project  : {_get_project_name(git_root)}")
-    print(f"  Changes  : {num_added} added, {num_modified} modified, {num_archived} archived")
+    print(f"  Changes  : {len(changes['A'])} added, {len(modified)} modified, {len(true_deleted)} archived")
     if args.commit_sha:
         print(f"  SHA      : {args.commit_sha}")
     else:

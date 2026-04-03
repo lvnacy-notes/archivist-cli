@@ -37,6 +37,8 @@ from archivist.utils import (
     read_archivist_config,
     reassign_deletions,
     rename_suspicion,
+    report_changes,
+    write_changelog,
 )
 
 
@@ -187,7 +189,7 @@ def _process_file(
         return True
 
     # Publication cards (library publication only)
-    if cls == "library publication":
+    if cls == "collection":
         name = full.stem
         if git_status == "R":
             stats["publications"]["updated"].append((filepath, name, old_filepath))
@@ -203,7 +205,7 @@ def _process_file(
         return True
 
     # Definition cards
-    if cls == "definition":
+    if cls == "entry":
         word = full.stem
         aliases = fm.get("aliases") or []
         if isinstance(aliases, str):
@@ -229,8 +231,8 @@ def _analyse_catalog_changes(changes: dict, git_root: Path) -> dict:
     Route changed .md files into named class buckets:
       works        — files with work-stage field, bucketed by status
       authors      — class: author
-      publications — class: library publication
-      definitions  — class: definition (word + aliases surfaced)
+      publications — class: collection
+      definitions  — class: entry (word + aliases surfaced)
 
     Anything not claimed by a named class falls through to generic sections.
     """
@@ -598,7 +600,11 @@ def _build_frontmatter(
 # Body renderers
 # ---------------------------------------------------------------------------
 
-def _work_list(works: list, fallback: str, descriptions: dict = None) -> str:
+def _work_list(
+    works: list,
+    fallback: str,
+    descriptions: dict = None
+) -> str:
     if descriptions is None:
         descriptions = {}
     if not works:
@@ -625,7 +631,11 @@ def _work_list(works: list, fallback: str, descriptions: dict = None) -> str:
     return "".join(lines)
 
 
-def _entity_list(entries: list, fallback: str, descriptions: dict = None) -> str:
+def _entity_list(
+    entries: list,
+    fallback: str,
+    descriptions: dict = None
+) -> str:
     """Render (filepath, name[, old_filepath]) author/publication entries."""
     if descriptions is None:
         descriptions = {}
@@ -654,7 +664,11 @@ def _entity_list(entries: list, fallback: str, descriptions: dict = None) -> str
     return "".join(lines)
 
 
-def _definition_list(entries: list, fallback: str, descriptions: dict = None) -> str:
+def _definition_list(
+    entries: list,
+    fallback: str,
+    descriptions: dict = None
+) -> str:
     """Render (filepath, word, aliases[, old_filepath]) definition entries."""
     if descriptions is None:
         descriptions = {}
@@ -852,7 +866,9 @@ def _build_body(
 
 def run(args: argparse.Namespace) -> None:
     git_root = get_repo_root()
+    print(f"  📁 Repo root : {git_root}")
     output_dir = _find_output_dir(git_root)
+    print(f"  📁 Output dir: {output_dir}")
 
     if not args.dry_run:
         ensure_staged(None, git_root)
@@ -863,6 +879,7 @@ def run(args: argparse.Namespace) -> None:
     true_deleted, dir_renamed_files = reassign_deletions(changes["D"], dir_renames)
     all_renames = changes["R"] + dir_renamed_files
     modified = changes["M"] + [new for _, new in all_renames]
+    report_changes(changes, modified, true_deleted)
 
     num_modified = len(modified)
     num_added = len(changes["A"])
@@ -891,10 +908,13 @@ def run(args: argparse.Namespace) -> None:
     descriptions = {}
     user_content = None
     if existing:
+        print(f"  🔍 Found existing changelog: {existing.name} — updating in place")
         existing_text = existing.read_text()
         descriptions = extract_descriptions(existing_text)
         user_content = extract_user_content(existing_text)
         output_path = existing
+    else:
+        print(f"  🆕 No existing changelog found — creating {output_path.name}")
 
     frontmatter = _build_frontmatter(
         args.commit_sha,
@@ -913,9 +933,7 @@ def run(args: argparse.Namespace) -> None:
         print(changelog_content)
         print(f"\n=== Would write to: {output_path} ===")
     else:
-        output_path.write_text(changelog_content)
-        verb = "updated" if existing else "written"
-        print(f"✓ Changelog {verb}: {output_path}")
+        write_changelog(output_path, changelog_content, existing=bool(existing))
 
     works = lib_stats["works"]
     authors = lib_stats["authors"]
