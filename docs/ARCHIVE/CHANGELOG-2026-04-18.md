@@ -4,9 +4,9 @@ category:
   - changelog
 log-scope: general
 modified: 2026-04-18
-UUID: c6c32111-7ffa-40b9-87ed-9beec20aed51
+UUID: cc79b027-6606-48e8-ae2c-be6457c24ad6
 commit-sha: 
-files-modified: 3
+files-modified: 7
 files-created: 0
 files-archived: 0
 tags:
@@ -22,15 +22,22 @@ tags:
 | Date | 2026-04-18 |
 | Commit SHA | [fill in after commit] |
 | Files Added | 0 |
-| Files Modified | 3 |
+| Files Modified | 7 |
 | Files Archived | 0 |
 
 ## Changes
 
 ### Files Modified
-- `.github/workflows/ci.yaml`: add push to trigger required checks
-- `pyproject.toml`: bump version
-- `docs/ARCHIVE/CHANGELOG-2026-04-18-c1495eb.md` *(renamed from `CHANGELOG-2026-04-18.md`)*: backfilled commit hash from prior commit
+- `.github/workflows/ci.yaml`:
+  - tightened permissions
+  - added terminal gate job
+- `archivist/commands/frontmatter/add.py`: patch type errors
+- `archivist/commands/frontmatter/apply_template.py`: patch type errors
+- `archivist/commands/frontmatter/remove.py`: patch type errors
+- `archivist/commands/hooks/install.py`:
+  - migrated to raw strings for better string literal handling of bash scripts
+- `archivist/utils/git.py`: tightened up regex
+- `docs/ARCHIVE/CHANGELOG-2026-04-18-d006c88.md` *(renamed from `CHANGELOG-2026-04-18.md`)*: backfilled commit hash from prior commit
 
 ### New Files Created
 - No new files
@@ -42,7 +49,7 @@ tags:
 <!-- archivist:auto-end -->
 ## Notes
 
-patch: add `on: push` to ci workflow
+Patch: type errors, permissions, and ci terminal gate
 
 ---
 

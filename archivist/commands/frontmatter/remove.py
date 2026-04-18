@@ -38,6 +38,8 @@ def _process_note(note_path: Path, prop: str, dry_run: bool) -> bool:
         return False
 
     match = FRONTMATTER_RE.match(content)
+    if not match:
+        return False
     raw_fm = match.group(1)
     body = content[match.end():]
 

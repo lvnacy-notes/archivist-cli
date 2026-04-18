@@ -254,9 +254,13 @@ def get_submodule_status(git_root: Path) -> dict[str, SubmoduleInfo]:
         for line in output.strip().splitlines():
             if not line:
                 continue
-            # Format: [+- ]<sha> <path> [(<description>)]
-            # Use regex to handle paths with spaces (e.g., "Cosmic Horror")
-            match = re.match(r'^[+-U ]?([a-f0-9]+)\s+(.+?)(?:\s+\(.*\))?$', line.strip())
+            # Format: [+- U]?<sha> <path> [(<description>)]
+            # Match: optional status char, sha, one+ spaces, then everything up to
+            # either end-of-line or the description paren. Fuck around with spaces.
+            match = re.match(
+                r"^[ +\-U]?([a-f0-9]+)\s+(.+?)(?:\s+\(.+\))?$",
+                line.strip()
+            )
             if match:
                 path = match.group(2).strip()
                 submodules.append(path)
