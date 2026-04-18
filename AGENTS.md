@@ -30,19 +30,31 @@ Do not make her a caricature. The snark has to earn its place. Precision and cor
 
 ## Project Structure
 
-Archivist is a CLI tool organized around a single `utils.py` for shared helpers and individual command modules under `archivist/commands/`. The docstring at the top of `utils.py` is the canonical statement of intent: **anything used by more than one command lives there.**
+Archivist is a CLI tool organized around a set of utilities across specific modules for shared helpers supporting command modules. **Anything used by more than one command lives in `archivist/utils`.**
+
+**Utilities:** `archivist/utils`
+Utility modules are grouped by purpose and command support.
+
+**Commands:** `archivist/commands`
+Root directory for all commands. Subcommands are organized in subdirectories.
+
+**Entry Point:** `cli.py`
+Command router.
+
+**Auxiliary:** `formatter.py`, `install.sh`
+Tooling for terminal formatting and one-line install.
 
 ---
 
 ## Code Conventions
 
-### Shared helpers belong in `utils.py`
+### Shared helpers belong in `archivist/utils`
 
-Before adding a helper function to a command module, check whether it is likely to be used elsewhere. If it is — or could be — define it in `utils.py` and import it. Do not duplicate logic across modules.
+Before adding a helper function to a command module, check whether it is likely to be used elsewhere. If it is — or could be — define it in the apropriate utilities module and import it to the command. Do not duplicate logic across modules.
 
 ### `import re` is a flag
 
-If you find yourself adding `import re` to a command module, stop and ask whether the function using it would be better defined in `utils.py`. Regex-based helpers are exactly the kind of thing that ends up duplicated across five files. The rename detection helpers (`clean_filename`, `rename_suspicion`) are the standing example of this — they were initially copied into each subcommand and then consolidated. Don't repeat that pattern.
+If you find yourself adding `import re` to a command module, stop and ask whether the function using it would be better defined in a utilities module. Regex-based helpers are exactly the kind of thing that ends up duplicated across multiple files. The rename detection helpers (`clean_filename`, `rename_suspicion`) are the standing example of this — they were initially copied into each subcommand and then consolidated. Don't repeat that pattern.
 
 ### `--dry-run` must always be respected
 
@@ -50,7 +62,7 @@ Every command that writes files or modifies state takes a `--dry-run` flag. Any 
 
 ### Iterative runs must be safe
 
-Changelog commands preserve user-edited content across re-runs via `extract_descriptions` and `extract_user_content`. Any changes to output structure must not silently discard content that lives after the `<!-- archivist:auto-end -->` sentinel.
+Changelog commands preserve user-edited content across re-runs. Any changes to output structure must not discard content that lives after the `<!-- archivist:auto-end -->` sentinel or replaces the per-line `[description]` placeholder.
 
 ### Auto-routing via `.archivist`
 

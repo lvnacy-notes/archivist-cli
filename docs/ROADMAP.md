@@ -40,6 +40,38 @@ A partial solution was implemented: `detect_dir_renames` and `reassign_deletions
 
 Until resolved, directory renames require manual review of the generated changelog.
 
+### Templater Support
+
+Obsidian's [Templater plugin](https://github.com/SilentVoid13/Templater) allows
+users to embed dynamic expressions in frontmatter property values:
+
+```yaml
+created: <% tp.date.now("YYYY-MM-DD") %>
+title: <% tp.file.title %>
+```
+
+Archivist currently has no awareness of these expressions. Any frontmatter
+command that reads and rewrites a file containing unresolved Templater syntax
+may corrupt the expression, mangle the YAML, or silently drop the value.
+
+The full design is documented in `TEMPLATER_SUPPORT_PLAN.md`. The short version:
+
+- **No Node.js.** The implementation is a Python reimplementation of the
+  relevant `tp.*` API surface, scoped to what actually appears in frontmatter
+  (`tp.date`, `tp.file`, `tp.frontmatter`). Interactive and Obsidian-API-bound
+  namespaces (`tp.system`, `tp.obsidian`, `tp.user`) are explicitly out of scope.
+- **Phased delivery.** Phase 1 is safe preservation — mask expressions before
+  YAML manipulation, restore them after, no corruption even before resolution
+  works. Phase 2 adds the resolution engine. Phase 3 adds cross-property
+  references. An optional Phase 4 gates `dukpy` (an embedded JS interpreter)
+  behind an optional dependency group as a fallback evaluator.
+- **Config detection already done.** `archivist init` now detects the Templater
+  plugin and writes `templater: true/false` into `.archivist`. Commands that
+  need to behave differently when Templater is present can read this flag.
+
+Start with Phase 1. It is entirely self-contained and eliminates the corruption
+risk without touching the resolution problem at all.
+
 ### `reclassify` — Structural Migration on Reclassification
 
 Currently, `archivist reclassify` is a surgical value swap: it rewrites the `class:` line in frontmatter and nothing else. That's intentional for the first pass, but the long-term vision is a full structural migration — when you reclassify a note, the command applies the target class's frontmatter template to it.

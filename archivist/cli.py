@@ -18,6 +18,7 @@ Usage:
     archivist changelog publication      [commit-sha] [--dry-run]
     archivist changelog story            [commit-sha] [--dry-run]
     archivist changelog vault            [commit-sha] [--dry-run]
+    archivist changelog seal             <commit-sha>
 
     archivist reclassify --from <old-class> --to <new-class> [--path <path>] [--dry-run]
 
@@ -66,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist manifest editions/042 --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
     try:
         _version = importlib.metadata.version("archivist")
@@ -74,8 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
         _version = "unknown"
     parser.add_argument(
         "--version", "-V",
-        action="version",
-        version=f"archivist {_version}",
+        action = "version",
+        version = f"archivist {_version}",
     )
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
     subparsers.required = True
@@ -83,10 +84,11 @@ def build_parser() -> argparse.ArgumentParser:
     # -----------------------------------------------------------------------
     # init
     # -----------------------------------------------------------------------
+
     init_p = subparsers.add_parser(
         "init",
-        help="Initialize archivist for this project",
-        description=(
+        help = "Initialize archivist for this project",
+        description = (
             "Run once per project. Once per machine after cloning.\n\n"
             "No .archivist found: asks what kind of project this is, writes the\n"
             "config, installs the hooks, and leaves you to it. Already configured:\n"
@@ -96,23 +98,25 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist init --dry-run",
             )
         ),
-        epilog=fmt_warning(
+        epilog = fmt_warning(
             "Overwrites any existing git hooks in .git/hooks/ — no backup, no undo.\n"
             "  Check what's in there first: `ls .git/hooks/`\n"
             "  Don't be an idiot. Preserve anything you need before you confirm."
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
     init_p.add_argument("--dry-run", action="store_true",
-                        help="Preview without writing any files")
+                        help = "Preview without writing any files")
+
 
     # -----------------------------------------------------------------------
     # frontmatter
     # -----------------------------------------------------------------------
+
     fm_parser = subparsers.add_parser(
         "frontmatter",
-        help="Bulk-manage YAML frontmatter properties across all notes",
-        description=(
+        help = "Bulk-manage YAML frontmatter properties across all notes",
+        description = (
             "Bulk-manage YAML frontmatter across every .md file in the repo.\n"
             "All subcommands recurse from the git root. --dry-run is always available\n"
             "and you should probably use it first."
@@ -123,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist frontmatter apply-template -t template.md -c character",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
     fm_sub = fm_parser.add_subparsers(dest="fm_command", metavar="<subcommand>")
     fm_sub.required = True
@@ -131,8 +135,8 @@ def build_parser() -> argparse.ArgumentParser:
     # frontmatter add
     add_p = fm_sub.add_parser(
         "add",
-        help="Add a property to all notes",
-        description=(
+        help = "Add a property to all notes",
+        description = (
             "I don't know what to tell you. Add means add, as in this adds a\n"
             "property to every .md file in the repo. But it also creates a\n"
             "frontmatter block if there isn't one. It skips notes that already\n"
@@ -144,22 +148,38 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist frontmatter add -p status -v draft --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    add_p.add_argument("-p", "--property", required=True, metavar="PROP",
-                       help="Property name to add")
-    add_p.add_argument("-v", "--value", default=None, metavar="VALUE",
-                       help="Value to pair with the property (omit for bare key)")
-    add_p.add_argument("--overwrite", action="store_true",
-                       help="Overwrite the property if it already exists")
-    add_p.add_argument("--dry-run", action="store_true",
-                       help="Preview changes without writing to disk")
+    add_p.add_argument(
+        "-p",
+        "--property",
+        required = True,
+        metavar = "PROP",
+        help = "Property name to add"
+    )
+    add_p.add_argument(
+        "-v",
+        "--value",
+        default = None,
+        metavar = "VALUE",
+        help = "Value to pair with the property (omit for bare key)"
+    )
+    add_p.add_argument(
+        "--overwrite",
+        action = "store_true",
+        help = "Overwrite the property if it already exists"
+    )
+    add_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview changes without writing to disk"
+    )
 
     # frontmatter remove
     rm_p = fm_sub.add_parser(
         "remove",
-        help="Remove a property from all notes",
-        description=(
+        help = "Remove a property from all notes",
+        description = (
             "You are smart enough to use my services, so I trust you to understand\n"
             "what remove means. But just in case: it removes a property and\n"
             "its value from every .md file in the repo. If removal leaves the\n"
@@ -171,16 +191,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=ArchivistHelpFormatter,
     )
-    rm_p.add_argument("-p", "--property", required=True, metavar="PROP",
-                      help="Property name to remove")
-    rm_p.add_argument("--dry-run", action="store_true",
-                      help="Preview changes without writing to disk")
+    rm_p.add_argument(
+        "-p",
+        "--property",
+        required = True,
+        metavar = "PROP",
+        help = "Property name to remove"
+    )
+    rm_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview changes without writing to disk"
+    )
 
     # frontmatter rename
     ren_p = fm_sub.add_parser(
         "rename",
-        help="Rename a property across all notes",
-        description=(
+        help = "Rename a property across all notes",
+        description = (
             "Rename is rename, but with a few caveats. Listen (or, read rather)\n"
             "carefully: this will rename a property across all notes, and it\n"
             "will preserve its value EXACTLY. You will end up with strings\n"
@@ -192,20 +220,33 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist frontmatter rename -p tags -n keywords --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    ren_p.add_argument("-p", "--property", required=True, metavar="PROP",
-                       help="Current property name")
-    ren_p.add_argument("-n", "--new-name", required=True, metavar="NEW",
-                       help="New property name")
-    ren_p.add_argument("--dry-run", action="store_true",
-                       help="Preview changes without writing to disk")
+    ren_p.add_argument(
+        "-p",
+        "--property",
+        required = True,
+        metavar = "PROP",
+        help="Current property name"
+    )
+    ren_p.add_argument(
+        "-n",
+        "--new-name",
+        required = True,
+        metavar = "NEW",
+        help="New property name"
+    )
+    ren_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview changes without writing to disk"
+    )
 
     # frontmatter apply-template
     tpl_p = fm_sub.add_parser(
         "apply-template",
-        help="Apply a frontmatter template to notes matching specified criteria",
-        description=(
+        help = "Apply a frontmatter template to notes matching specified criteria",
+        description = (
             "Provide a template note with the properties and structure you want,\n"
             "and provide the criteria for which notes it applies to. I'll handle the rest.\n\n"
             "The template is the authority. The template is the law. You built it.\n\n"
@@ -225,28 +266,56 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist frontmatter apply-template -t template.md -c location --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    tpl_p.add_argument("-t", "--template", required=True, metavar="FILE",
-                       help="Path to the template markdown file")
-    tpl_p.add_argument("-c", "--class", dest="note_class", default=None, metavar="CLASS",
-                       help="Class value to match (e.g. 'character', 'location')")
-    tpl_p.add_argument("--class-property", default="class", metavar="PROP",
-                       help="Frontmatter property used to identify the class (default: class)")
-    tpl_p.add_argument("--path", default=None, metavar="PATH",
-                       help="Limit search to this directory (relative to repo root)")
-    tpl_p.add_argument("--tag", default=None, metavar="TAG",
-                       help="Match notes that carry this tag in their frontmatter")
-    tpl_p.add_argument("--dry-run", action="store_true",
-                       help="Preview changes without writing to disk")
+    tpl_p.add_argument(
+        "-t",
+        "--template",
+        required = True,
+        metavar = "FILE",
+        help = "Path to the template markdown file"
+    )
+    tpl_p.add_argument(
+        "-c",
+        "--class",
+        dest = "note_class",
+        default = None,
+        metavar = "CLASS",
+        help = "Class value to match (e.g. 'character', 'location')"
+    )
+    tpl_p.add_argument(
+        "--class-property",
+        default = "class",
+        metavar = "PROP",
+        help = "Frontmatter property used to identify the class (default: class)"
+    )
+    tpl_p.add_argument(
+        "--path",
+        default = None,
+        metavar = "PATH",
+        help = "Limit search to this directory (relative to repo root)"
+    )
+    tpl_p.add_argument(
+        "--tag",
+        default = None,
+        metavar = "TAG",
+        help = "Match notes that carry this tag in their frontmatter"
+    )
+    tpl_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview changes without writing to disk"
+    )
+
 
     # -----------------------------------------------------------------------
     # manifest
     # -----------------------------------------------------------------------
+
     mf_parser = subparsers.add_parser(
         "manifest",
-        help="Generate an edition manifest, or register a commit SHA",
-        description=(
+        help = "Generate an edition manifest, or register a commit SHA",
+        description = (
             "You know what I like? When something is delivered and well\n"
             "documented, so I know exactly what's in it. THat's what this\n"
             "does. It generates an edition manifest in ARCHIVE/. Sure, it's\n"
@@ -259,28 +328,49 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist manifest --register a1b2c3d",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    mf_parser.add_argument("edition_dir", nargs="?", default=None,
-                            metavar="EDITION-DIR",
-                            help="Path to the edition directory")
-    mf_parser.add_argument("commit_sha", nargs="?", default=None,
-                            metavar="COMMIT-SHA",
-                            help="Diff against a specific commit (default: staged changes)")
-    mf_parser.add_argument("-v", "--volume", default=None, metavar="NUM",
-                            help="Volume number/identifier for the manifest")
-    mf_parser.add_argument("--register", metavar="SHA", default=None,
-                            help="Register a commit SHA in the archive DB (standalone mode)")
-    mf_parser.add_argument("--dry-run", action="store_true",
-                            help="Preview without writing to disk or DB")
+    mf_parser.add_argument(
+        "edition_dir",
+        nargs = "?",
+        default = None,
+        metavar = "EDITION-DIR",
+        help = "Path to the edition directory"
+    )
+    mf_parser.add_argument(
+        "commit_sha",
+        nargs = "?",
+        default = None,
+        metavar = "COMMIT-SHA",
+        help = "Diff against a specific commit (default: staged changes)"
+    )
+    mf_parser.add_argument(
+        "-v",
+        "--volume",
+        default = None,
+        metavar = "NUM",
+        help="Volume number/identifier for the manifest"
+    )
+    mf_parser.add_argument(
+        "--register",
+        metavar = "SHA",
+        default = None,
+        help = "Register a commit SHA in the archive DB (standalone mode)"
+    )
+    mf_parser.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview without writing to disk or DB"
+    )
 
     # -----------------------------------------------------------------------
     # changelog
     # -----------------------------------------------------------------------
+
     cl_parser = subparsers.add_parser(
         "changelog",
-        help="Generate a changelog (auto-routes by module type if .archivist is present)",
-        description=(
+        help = "Generate a changelog (auto-routes by module type if .archivist is present)",
+        description = (
             "Run this bare and Archivist will check your .archivist config,\n"
             "figure out what kind of project you're in, and run the right\n"
             "subcommand without you having to think about it. You're welcome.\n\n"
@@ -292,20 +382,32 @@ def build_parser() -> argparse.ArgumentParser:
             "    archivist changelog <subcommand> --help\n"
             + fmt_examples(
                 "archivist changelog",
-                "archivist changelog a1b2c3d",
+                "archivist changelog --commit-sha a1b2c3d",
                 "archivist changelog --dry-run",
                 "archivist changelog --path src/",
                 "archivist changelog publication --help",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    cl_parser.add_argument("--dry-run", action="store_true",
-                           help="Preview without writing to disk")
-    cl_parser.add_argument("commit_sha", nargs="?", default=None, metavar="COMMIT-SHA",
-                       help="Diff against a specific commit (default: staged changes)")
-    cl_parser.add_argument("--path", default=None, metavar="PATH",
-                        help="File or directory to stage and scope the diff to")
+    cl_parser.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview without writing to disk"
+    )
+    cl_parser.add_argument(
+        "--commit-sha",
+        dest = "commit_sha",
+        default = None,
+        metavar = "SHA",
+        help = "Diff against a specific commit (default: staged changes)"
+    )
+    cl_parser.add_argument(
+        "--path",
+        default = None,
+        metavar = "PATH",
+        help = "File or directory to stage and scope the diff to"
+    )
 
     cl_sub = cl_parser.add_subparsers(dest="cl_command", metavar="<subcommand>")
     cl_sub.required = False
@@ -313,8 +415,8 @@ def build_parser() -> argparse.ArgumentParser:
     # changelog general
     gen_p = cl_sub.add_parser(
         "general",
-        help="Generic changelog — same as bare `archivist changelog`",
-        description=(
+        help = "Generic changelog — same as bare `archivist changelog`",
+        description = (
             "Clean and minimal. No project-type-specific sections, no opinions\n"
             "about what kind of work you're doing. Just the diff, the table,\n"
             "and fields for you to fill in.\n\n"
@@ -328,20 +430,32 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist changelog general --path src/ --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    gen_p.add_argument("commit_sha", nargs="?", default=None, metavar="COMMIT-SHA",
-                       help="Diff against a specific commit (default: staged changes)")
-    gen_p.add_argument("--path", default=None, metavar="PATH",
-                       help="File or directory to stage and scope the changelog to")
-    gen_p.add_argument("--dry-run", action="store_true",
-                       help="Preview without writing to disk")
+    gen_p.add_argument(
+        "commit_sha",
+        nargs = "?",
+        default = None,
+        metavar = "COMMIT-SHA",
+        help="Diff against a specific commit (default: staged changes)"
+    )
+    gen_p.add_argument(
+        "--path",
+        default = None,
+        metavar = "PATH",
+        help = "File or directory to stage and scope the changelog to"
+    )
+    gen_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview without writing to disk"
+    )
 
     # changelog publication
     pub_p = cl_sub.add_parser(
         "publication",
-        help="Changelog for a newsletter or publication module",
-        description=(
+        help = "Changelog for a newsletter or publication module",
+        description = (
             "This command generates a changelog for newsletter and publication\n"
             "modules. It queries the archive DB for edition commit hashes that\n"
             "have not yet been recorded in any changelog. If it finds some, it\n"
@@ -356,18 +470,26 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist changelog publication --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    pub_p.add_argument("commit_sha", nargs="?", default=None, metavar="COMMIT-SHA",
-                       help="Diff against a specific commit (default: staged changes)")
-    pub_p.add_argument("--dry-run", action="store_true",
-                       help="Preview without writing to disk or DB")
+    pub_p.add_argument(
+        "commit_sha",
+        nargs = "?",
+        default = None,
+        metavar = "COMMIT-SHA",
+        help = "Diff against a specific commit (default: staged changes)"
+    )
+    pub_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview without writing to disk or DB"
+    )
 
     # changelog story
     story_p = cl_sub.add_parser(
         "story",
-        help="Changelog for a story or creative writing module",
-        description=(
+        help = "Changelog for a story or creative writing module",
+        description = (
             "This generates a session changelog for story and creative writing\n"
             "modules. It includes writing-specific sections: scene development,\n"
             "character arcs, plot advancement, creative considerations, and\n"
@@ -378,18 +500,26 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist changelog story --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    story_p.add_argument("commit_sha", nargs="?", default=None, metavar="COMMIT-SHA",
-                         help="Diff against a specific commit (default: staged changes)")
-    story_p.add_argument("--dry-run", action="store_true",
-                         help="Preview without writing to disk")
+    story_p.add_argument(
+        "commit_sha",
+        nargs = "?",
+        default = None,
+        metavar = "COMMIT-SHA",
+        help = "Diff against a specific commit (default: staged changes)"
+    )
+    story_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview without writing to disk"
+    )
 
     # changelog vault
     vault_p = cl_sub.add_parser(
         "vault",
-        help="Changelog for a vault-level commit, including submodule status",
-        description=(
+        help = "Changelog for a vault-level commit, including submodule status",
+        description = (
             "This generates the Vault-level changelog. It tracks standard file\n"
             "changes and submodule state: current SHAs, what's dirty, what\n"
             "hasn't been pushed.\n\n"
@@ -400,18 +530,26 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist changelog vault --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    vault_p.add_argument("commit_sha", nargs="?", default=None, metavar="COMMIT-SHA",
-                         help="Diff against a specific commit (default: staged changes)")
-    vault_p.add_argument("--dry-run", action="store_true",
-                         help="Preview without writing to disk")
+    vault_p.add_argument(
+        "commit_sha",
+        nargs = "?",
+        default = None,
+        metavar = "COMMIT-SHA",
+        help = "Diff against a specific commit (default: staged changes)"
+    )
+    vault_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview without writing to disk"
+    )
 
     # changelog library
     lib_p = cl_sub.add_parser(
         "library",
-        help="Changelog for a library or catalog module",
-        description=(
+        help = "Changelog for a library or catalog module",
+        description = (
             "This generates a changelog for library modules. It tracks works\n"
             "catalogued, authors, publications, and definitions in symmetry.\n"
             + fmt_examples(
@@ -420,20 +558,54 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist changelog library --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    lib_p.add_argument("commit_sha", nargs="?", default=None, metavar="COMMIT-SHA",
-                       help="Diff against a specific commit (default: staged changes)")
-    lib_p.add_argument("--dry-run", action="store_true",
-                       help="Preview without writing to disk")
+    lib_p.add_argument(
+        "commit_sha",
+        nargs = "?",
+        default = None,
+        metavar = "COMMIT-SHA",
+        help = "Diff against a specific commit (default: staged changes)"
+    )
+    lib_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview without writing to disk"
+    )
+
+    # changelog seal
+    seal_p = cl_sub.add_parser(
+        "seal",
+        help = "Backfill a commit SHA into changelogs and update the archive DB",
+        description = (
+            "Called automatically by the post-commit hook. You probably don't\n"
+            "need to run this manually — but if a hook failed, a seal got\n"
+            "missed, or you're just that kind of person, here it is.\n\n"
+            "Finds any unsealed changelogs in the given commit, backfills the\n"
+            "SHA into frontmatter and the body table, renames the file to mark\n"
+            "it as sealed, and updates the archive DB if a UUID is present in\n"
+            "the frontmatter.\n\n"
+            "Sealed changelogs are never picked up as an existing changelog on\n"
+            "future runs. The rename is the lock.\n"
+            + fmt_examples(
+                "archivist changelog seal abc123def456...",
+            )
+        ),
+        formatter_class = ArchivistHelpFormatter,
+    )
+    seal_p.add_argument(
+        "commit_sha",
+        metavar = "COMMIT-SHA",
+        help = "Full commit SHA to seal against"
+    )
 
     # -----------------------------------------------------------------------
     # reclassify
     # -----------------------------------------------------------------------
     rc_parser = subparsers.add_parser(
         "reclassify",
-        help="Replace a frontmatter class value across all matching notes",
-        description=(
+        help = "Replace a frontmatter class value across all matching notes",
+        description = (
             "Find every .md file whose frontmatter `class` field matches the\n"
             "given value and rewrite it to a new value. Surgical: only the\n"
             "`class:` line is touched. Everything else in the frontmatter is\n"
@@ -446,24 +618,41 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist reclassify --from article --to column --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    rc_parser.add_argument("--from", dest="from_class", required=True, metavar="OLD",
-                           help="Current class value to match (case-insensitive)")
-    rc_parser.add_argument("--to", dest="to_class", required=True, metavar="NEW",
-                           help="New class value to write")
-    rc_parser.add_argument("--path", default=None, metavar="PATH",
-                           help="Limit search to this file or directory")
-    rc_parser.add_argument("--dry-run", action="store_true",
-                           help="Preview changes without writing to disk")
+    rc_parser.add_argument(
+        "--from",
+        dest="from_class",
+        required = True,
+        metavar = "OLD",
+        help = "Current class value to match (case-insensitive)"
+    )
+    rc_parser.add_argument(
+        "--to",
+        dest = "to_class",
+        required = True,
+        metavar = "NEW",
+        help="New class value to write"
+    )
+    rc_parser.add_argument(
+        "--path",
+        default = None,
+        metavar = "PATH",
+        help="Limit search to this file or directory"
+    )
+    rc_parser.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help="Preview changes without writing to disk"
+    )
 
     # -----------------------------------------------------------------------
     # hooks
     # -----------------------------------------------------------------------
     hooks_parser = subparsers.add_parser(
         "hooks",
-        help="Install or sync archivist git hooks",
-        description=(
+        help = "Install or sync archivist git hooks",
+        description = (
             "Use this command to manage Archivist's git hooks. But, like, just\n"
             "barely. Hooks are installed globally into `~/.git-templates/hooks/`\n"
             "and copied automatically into new clones. Don't be dumb; back up\n"
@@ -476,7 +665,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist hooks sync",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
     hooks_sub = hooks_parser.add_subparsers(dest="hooks_command", metavar="<subcommand>")
     hooks_sub.required = True
@@ -484,8 +673,8 @@ def build_parser() -> argparse.ArgumentParser:
     # hooks install
     hi_p = hooks_sub.add_parser(
         "install",
-        help="Install hooks globally into ~/.git-templates/hooks/",
-        description=(
+        help = "Install hooks globally into ~/.git-templates/hooks/",
+        description = (
             "Write hook scripts into `~/.git-templates/hooks/` and ensure git is\n"
             "configured to use that directory as its template source. All future\n"
             "`git clone` and `git init` operations will automatically include the hooks.\n"
@@ -494,16 +683,19 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist hooks install --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    hi_p.add_argument("--dry-run", action="store_true",
-                      help="Preview without writing any files")
+    hi_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview without writing any files"
+    )
 
     # hooks sync
     hs_p = hooks_sub.add_parser(
         "sync",
-        help="Sync hooks into the current repo's .git/hooks/",
-        description=(
+        help = "Sync hooks into the current repo's .git/hooks/",
+        description = (
             "Copy hooks directly into the current repo's `.git/hooks/`. Use this\n"
             "for repos that existed before `hooks install` was run."
             + fmt_examples(
@@ -511,10 +703,13 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist hooks sync --dry-run",
             )
         ),
-        formatter_class=ArchivistHelpFormatter,
+        formatter_class = ArchivistHelpFormatter,
     )
-    hs_p.add_argument("--dry-run", action="store_true",
-                      help="Preview without writing any files")
+    hs_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview without writing any files"
+    )
 
     return parser
 
@@ -523,21 +718,28 @@ def main():
     parser = build_parser()
     import argcomplete
     argcomplete.autocomplete(parser)
-    args = parser.parse_args()
+    args: argparse.Namespace = parser.parse_args()
 
     if args.command == "init":
         from archivist.commands.init import run
         run(args)
 
+    # If a command has three or more subcommands,
+    # route through a dict to avoid a long if-elif chain
     elif args.command == "frontmatter":
-        if args.fm_command == "add":
-            from archivist.commands.frontmatter.add import run
-        elif args.fm_command == "remove":
-            from archivist.commands.frontmatter.remove import run
-        elif args.fm_command == "rename":
-            from archivist.commands.frontmatter.rename import run
-        elif args.fm_command == "apply-template":
-            from archivist.commands.frontmatter.apply_template import run
+        fm_commands = {
+            "add": "archivist.commands.frontmatter.add",
+            "remove": "archivist.commands.frontmatter.remove",
+            "rename": "archivist.commands.frontmatter.rename",
+            "apply-template": "archivist.commands.frontmatter.apply_template",
+        }
+        
+        if args.fm_command not in fm_commands:
+            print(f"Error: Unknown frontmatter subcommand '{args.fm_command}'")
+            return
+        
+        module_path = fm_commands[args.fm_command]
+        run = importlib.import_module(module_path).run
         run(args)
 
     elif args.command == "manifest":
@@ -549,7 +751,11 @@ def main():
 
         # Auto-detect from .archivist when no subcommand was explicitly given
         if cl_command is None:
-            from archivist.utils import get_repo_root, get_module_type, MODULE_CHANGELOG_COMMAND
+            from archivist.utils import (
+                get_repo_root,
+                get_module_type,
+                MODULE_CHANGELOG_COMMAND
+            )
             git_root = get_repo_root()
             module_type = get_module_type(git_root)
             if module_type and module_type in MODULE_CHANGELOG_COMMAND:
@@ -565,18 +771,17 @@ def main():
         if not hasattr(args, "path"):
             args.path = None
 
-        if cl_command == "general":
-            from archivist.commands.changelog.general import run
-        elif cl_command == "publication":
-            from archivist.commands.changelog.publication import run
-        elif cl_command == "story":
-            from archivist.commands.changelog.story import run
-        elif cl_command == "vault":
-            from archivist.commands.changelog.vault import run
-        elif cl_command == "library":
-            from archivist.commands.changelog.library import run
-        else:
-            from archivist.commands.changelog.general import run
+        cl_commands = {
+            "general": "archivist.commands.changelog.general",
+            "publication": "archivist.commands.changelog.publication",
+            "story": "archivist.commands.changelog.story",
+            "vault": "archivist.commands.changelog.vault",
+            "library": "archivist.commands.changelog.library",
+            "seal": "archivist.commands.changelog.seal",
+        }
+        
+        module_path = cl_commands.get(cl_command, "archivist.commands.changelog.general")
+        run = importlib.import_module(module_path).run
         run(args)
 
     elif args.command == "reclassify":

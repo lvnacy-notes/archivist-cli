@@ -37,12 +37,22 @@ fi
 
 GIT_ROOT=$(git rev-parse --show-toplevel)
 
-# Check for a staged manifest or changelog
-STAGED=$(git diff --cached --name-only)
-HAS_MANIFEST=$(echo "$STAGED" | grep -E '.*-manifest\\.md$' || true)
-HAS_CHANGELOG=$(echo "$STAGED" | grep -E 'CHANGELOG-[0-9]{4}-[0-9]{2}-[0-9]{2}\\.md$' || true)
+# Check for a staged manifest or changelog.
+# Query git directly rather than storing output in a variable and echoing it
+# back through grep — that approach is a fragile piece of shit that breaks
+# depending on shell, locale, and which way the wind is blowing.
+# A staged manifest is sufficient — no changelog needed for an edition commit.
+if git diff --cached --name-only | grep -qE '.*-manifest\.md$'; then
+    exit 0
+fi
 
-if [ -n "$HAS_MANIFEST" ] || [ -n "$HAS_CHANGELOG" ]; then
+# Only an UNSEALED changelog satisfies this check. Sealed changelogs carry a
+# short SHA suffix (CHANGELOG-YYYY-MM-DD-{sha}.md) because they are closed
+# records that document a past commit. They have nothing to do with the
+# changes currently staged. If only a sealed changelog is in the diff, the
+# hook correctly falls through to the prompt — that is intentional behaviour,
+# not a bug. Do not broaden this pattern to match sealed filenames.
+if git diff --cached --name-only | grep -qE 'CHANGELOG-[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$'; then
     exit 0
 fi
 
@@ -65,7 +75,7 @@ case "$CHOICE" in
         printf "  Edition directory path: "
         read -r EDITION_DIR </dev/tty
         archivist manifest "$EDITION_DIR"
-        MANIFEST_FILE=$(ls -t "$GIT_ROOT"/*-manifest.md 2>/dev/null | head -1)
+        MANIFEST_FILE=$(find "$GIT_ROOT" -name '*-manifest.md' -not -path '*/.git/*' -newer "$GIT_ROOT/.archivist" 2>/dev/null | head -1)
         if [ -n "$MANIFEST_FILE" ]; then
             git add "$MANIFEST_FILE"
             echo "  ✅ Manifest staged."
@@ -106,9 +116,8 @@ POST_COMMIT_HOOK = """\
 #!/bin/sh
 #
 # archivist post-commit hook
-# Always displays commit details. If .archivist is present, also backfills
-# the commit SHA into any manifest or changelog included in this commit,
-# then renames changelogs to include the short SHA in the filename.
+# Always displays commit details. If .archivist is present, backfills
+# manifests and delegates changelog sealing to archivist changelog seal.
 #
 
 # ---------------------------------------------------------------------------
@@ -133,7 +142,7 @@ echo "   \\"Create PR from $CURRENT_BRANCH to main\\""
 echo ""
 
 # ---------------------------------------------------------------------------
-# archivist SHA backfill (only runs in archivist-managed repos)
+# archivist post-commit work (only runs in archivist-managed repos)
 # ---------------------------------------------------------------------------
 GIT_ROOT=$(git rev-parse --show-toplevel)
 
@@ -141,56 +150,40 @@ if [ ! -f "$GIT_ROOT/.archivist" ]; then
     exit 0
 fi
 
-# Find manifest or changelog files included in this commit
+# ---------------------------------------------------------------------------
+# Manifest backfill — stays in bash, manifests don't rename or touch the DB
+# ---------------------------------------------------------------------------
 FILES=$(git diff-tree --no-commit-id -r --name-only HEAD)
 
-BACKFILLED=0
 for FILE in $FILES; do
-    FULL_PATH="$GIT_ROOT/$FILE"
-
-    # Only process manifest or changelog markdown files
     case "$FILE" in
-        *-manifest.md|*/CHANGELOG-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md|CHANGELOG-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md) ;;
+        *-manifest.md) ;;
         *) continue ;;
     esac
 
+    FULL_PATH="$GIT_ROOT/$FILE"
     [ -f "$FULL_PATH" ] || continue
 
-    # Flag if commit-sha field is empty, whitespace-only, a placeholder,
-    # or anything that isn't a valid 7-character hex short SHA
     CURRENT_SHA_VALUE=$(grep -E '^commit-sha:' "$FULL_PATH" | sed 's/^commit-sha:[[:space:]]*//')
     if echo "$CURRENT_SHA_VALUE" | grep -qE '^[0-9a-f]{7,}$'; then
-        continue  # already backfilled — skip
+        continue  # already backfilled
     fi
 
-    # Backfill short SHA into frontmatter
     sed -i.bak "s/^commit-sha:[[:space:]]*.*/commit-sha: $COMMIT_SHORT/" "$FULL_PATH"
-
-    # Backfill full SHA into body table
     sed -i.bak "s/| Commit SHA | \\[fill in after commit\\] |/| Commit SHA | $COMMIT_SHA |/" "$FULL_PATH"
-
-    # Clean up sed backup files (macOS sed -i requires an extension)
     rm -f "${FULL_PATH}.bak"
 
-    BACKFILLED=$((BACKFILLED + 1))
-    BASENAME=$(basename "$FILE")
-    echo "   📋 archivist: SHA backfilled in $BASENAME"
-
-    # Rename changelogs to append short SHA — manifests keep their names
-    case "$FILE" in
-        */CHANGELOG-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md|CHANGELOG-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md)
-            DIR=$(dirname "$FULL_PATH")
-            STEM=$(basename "$FILE" .md)
-            NEW_PATH="$DIR/${STEM}-${COMMIT_SHORT}.md"
-            mv "$FULL_PATH" "$NEW_PATH"
-            echo "   📝 Renamed: $BASENAME → $(basename $NEW_PATH)"
-            ;;
-    esac
+    echo "   📋 archivist: SHA backfilled in $(basename $FILE)"
 done
 
-if [ "$BACKFILLED" -gt 0 ]; then
-    echo "   ✏️  Updated file(s) left unstaged — commit when ready."
-    echo ""
+# ---------------------------------------------------------------------------
+# Changelog seal — delegates to Python for backfill, rename, and DB update
+# ---------------------------------------------------------------------------
+if command -v archivist &>/dev/null; then
+    archivist changelog seal "$COMMIT_SHA"
+else
+    echo "   ⚠️  archivist not found on PATH — changelog seal skipped"
+    echo "        Run: archivist changelog seal $COMMIT_SHA"
 fi
 
 exit 0

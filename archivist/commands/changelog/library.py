@@ -20,306 +20,335 @@ for that day, if present.
 """
 
 import argparse
-import subprocess
-import sys
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, date as date_type
 from pathlib import Path
+from typing import TypedDict, cast
 
+import yaml
+
+from archivist.commands.changelog.changelog_base import ChangelogContext, run_changelog
 from archivist.utils import (
+    GitChanges,
     clean_filename,
-    detect_dir_renames,
-    ensure_staged,
-    extract_descriptions,
-    extract_user_content,
-    find_active_changelog,
     get_file_frontmatter,
-    get_repo_root,
+    get_file_from_git,
+    get_project_name,
+    get_today,
+    is_cross_dir_move,
+    matches_class_filter,
     read_archivist_config,
-    reassign_deletions,
+    rename_display_path,
     rename_suspicion,
-    report_changes,
-    write_changelog,
+    render_field,
 )
+
+
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+
+WORK_STAGES = ("placeholder", "raw", "active", "processed", "shelved")
+
+# Cap the author landscape pie at this many slices before bucketing the
+# rest into "Others". Beyond 8, Mermaid's palette starts cycling and
+# looking like a unicorn had a seizure.
+_AUTHOR_PIE_CAP = 8
+
+
+# -----------------------------------------------------------------------------
+# Library-specific types and interfaces
+# -----------------------------------------------------------------------------
+
+# Entries are tuples with varying lengths depending on operation
+DefinitionEntry = tuple[str, str, list[str], str | None]  # filepath, word, aliases, old_filepath
+EntityEntry = tuple[str, str, str | None]  # filepath, name, old_filepath
+WorkEntry = tuple[str, str, str, str | None]  # filepath, title, status, old_filepath
+
+# Catalog scan result structure for the full works directory snapshot. Used to
+# build the Catalog Snapshot section with static Mermaid charts. This is a
+# point-in-time snapshot of the catalog at generation time, not a live dashboard.
+class CatalogScanResult(TypedDict):
+    """
+    Result of scanning the works directory for a catalog snapshot.
+    """
+    stage_counts: dict[str, int]
+    author_counts: dict[str, int]
+    velocity: dict[str, int]
+    placeholder_debt: int
+    total_works: int
+
+class WorksBucket(TypedDict):
+    """
+    Stats bucket for works (files with work-stage).
+    Entries are routed based on git status (A/M/D/R).
+    Added entries: (filepath, title, status)
+    Updated entries: (filepath, title, status, old_filepath|None)
+    Removed entries: just filepaths (strings)
+    by_status: count of each work-stage found during scan
+    """
+    added: list[WorkEntry]
+    updated: list[WorkEntry]
+    removed: list[str]
+    by_status: dict[str, int]
+
+class EntityBucket(TypedDict):
+    """
+    Stats bucket for authors (class: author) and publications (class: collection).
+    Added entries: (filepath, name)
+    Updated entries: (filepath, name, old_filepath|None)
+    Removed entries: just filepaths (strings)
+    """
+    added: list[EntityEntry]
+    updated: list[EntityEntry]
+    removed: list[str]
+
+class DefinitionsBucket(TypedDict):
+    """
+    Stats bucket for definitions (class: entry).
+    Surfaces word and aliases from definition frontmatter.
+    Added entries: (filepath, word, aliases)
+    Updated entries: (filepath, word, aliases, old_filepath|None)
+    Removed entries: just filepaths (strings)
+    """
+    added: list[DefinitionEntry]
+    updated: list[DefinitionEntry]
+    removed: list[str]
+
+class LibraryStats(TypedDict):
+    """
+    Complete stats dict structure for library changelog generation.
+    Routes changed .md files into named class buckets by git status.
+    Each bucket tracks added, updated, removed operations separately.
+    """
+    works: WorksBucket
+    authors: EntityBucket
+    publications: EntityBucket
+    definitions: DefinitionsBucket 
+
+
+# Type alias for any stats bucket
+AnyStatsBucket = WorksBucket | EntityBucket | DefinitionsBucket
+
+# Type alias for entries across all bucket types
+AnyEntry = WorkEntry | EntityEntry | DefinitionEntry | str
+
+# -----------------------------------------------------------------------------
+# Frontmatter Helpers
+# -----------------------------------------------------------------------------
+
+def _get_string_from_fm(value: str | list[str] | None) -> str:
+    """
+    Extract a string from frontmatter value that might be a string, list, or None.
+    If it's a list, return the first element. If it's None, return empty string.
+    Useful for fields like title, work-stage that should be strings but might be lists.
+    """
+    if isinstance(value, list):
+        return value[0] if value else ""
+    return value if value else ""
 
 
 # ---------------------------------------------------------------------------
 # Git helpers
 # ---------------------------------------------------------------------------
 
-def _get_git_changes(commit_sha: str | None, path: Path | None = None) -> dict:
-    pathspec = ["--", str(path)] if path is not None else []
+def _get_committed_frontmatter(
+    filepath: str,
+    git_root: Path,
+    ref: str = "HEAD"
+) -> dict[str, str | list[str]]:
+    """
+    Recover frontmatter from a file at the given git ref by reading its
+    committed content via get_file_from_git().
 
-    if commit_sha:
-        cmd = ["git", "-c", "core.quotepath=false", "diff-tree",
-               "--name-status", "-M", "-r", commit_sha] + pathspec
-    else:
-        cmd = ["git", "-c", "core.quotepath=false", "diff-index",
-               "--cached", "--name-status", "-M", "HEAD"] + pathspec
+    Returns an empty dict if the file can't be retrieved, has no frontmatter,
+    or the YAML is unparseable. Used for deleted files (ref=HEAD) and
+    stage-transition detection where we need the *previous* state.
+    """
+    content = get_file_from_git(filepath, git_root, ref)
+    if content is None:
+        return {}
 
+    if not content.startswith("---"):
+        return {}
+    end = content.find("\n---", 3)
+    if end == -1:
+        return {}
     try:
-        output = subprocess.check_output(cmd, stderr=subprocess.PIPE, text=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Error running git command: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    changes = {"M": [], "A": [], "D": [], "R": []}
-    for line in output.strip().splitlines():
-        if not line:
-            continue
-        parts = line.split("\t")
-        status = parts[0].strip()[0]
-        if status == "R" and len(parts) == 3:
-            changes["R"].append((parts[1].strip(), parts[2].strip()))
-        elif status in changes:
-            changes[status].append(parts[-1].strip())
-
-    return changes
+        return yaml.safe_load(content[3:end].strip()) or {}
+    except Exception:
+        return {}
 
 
-def _get_project_name(git_root: Path) -> str:
-    return git_root.name.lower().replace("'", "").replace(" ", "-")
-
-
-def _find_output_dir(git_root: Path) -> Path:
-    output_dir = git_root / "ARCHIVE"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir
+def _get_previous_stage(filepath: str, git_root: Path) -> str | None:
+    """
+    Read work-stage from the last-committed version of a file.
+    Returns None if the file is new or carried no work-stage at HEAD.
+    """
+    fm = _get_committed_frontmatter(filepath, git_root)
+    val = fm.get("work-stage")
+    return str(val).strip() if val else None
 
 
 # ---------------------------------------------------------------------------
 # Library analysis
 # ---------------------------------------------------------------------------
 
-WORK_STAGES = ("placeholder", "raw", "active", "processed", "shelved")
-
-
-def _get_class(fm: dict) -> str:
-    """Return the class field value, normalised to lowercase stripped string."""
-    val = fm.get("class", "")
-    if isinstance(val, list):
-        return " ".join(str(v).strip().lower() for v in val)
-    return str(val).strip().lower()
-
-
-def _get_deleted_frontmatter(filepath: str, git_root: Path) -> dict:
+def _route_entity(
+    filepath: str,
+    name: str,
+    git_status: str,
+    old_filepath: str | None,
+    bucket: EntityBucket,
+) -> None:
     """
-    Recover frontmatter from a file that has been deleted from the working tree
-    by reading its last-committed content via `git show HEAD:<path>`.
-    Returns an empty dict if the file can't be retrieved or has no frontmatter.
+    Drop an author or publication entity into its stats bucket.
+    Extracted because authors and publications follow identical routing logic.
     """
-    try:
-        content = subprocess.check_output(
-            ["git", "show", f"HEAD:{filepath}"],
-            stderr=subprocess.PIPE, text=True, cwd=git_root,
-        )
-    except subprocess.CalledProcessError:
-        return {}
-
-    if not content.startswith("---"):
-        return {}
-    end = content.find("\n---", 3)
-    if end == -1:
-        return {}
-    fm_text = content[3:end].strip()
-    try:
-        import yaml
-        return yaml.safe_load(fm_text) or {}
-    except Exception:
-        return {}
+    if git_status == "R":
+        bucket["updated"].append((filepath, name, old_filepath))
+    elif git_status == "A":
+        bucket["added"].append((filepath, name, None))
+    elif git_status == "M":
+        bucket["updated"].append((filepath, name, None))
+    else:  # D
+        bucket["removed"].append(filepath)
 
 
-def _process_file(
+def _route_file_into_stats(
     filepath: str,
     git_root: Path,
     git_status: str,
-    stats: dict,
+    stats: LibraryStats,
     old_filepath: str | None = None,
 ) -> bool:
     """
-    Read frontmatter from a single .md file and route it into the appropriate
-    stats bucket. Returns True if the file was claimed by a named class,
-    False if it should fall through to the generic sections.
+    Read frontmatter from a single .md file and drop it into the right
+    stats bucket. Returns True if claimed by a named class (works, authors,
+    publications, definitions), False if it should fall through to the
+    generic other-files sections.
+
+    `git_status` is one of "A", "M", "D", "R".
+    `old_filepath` is only provided for renames.
     """
     full = git_root / filepath
     if full.suffix != ".md":
         return False
 
-    if git_status == "D":
-        fm = _get_deleted_frontmatter(filepath, git_root)
-    else:
-        fm = get_file_frontmatter(str(full))
+    fm = (
+        _get_committed_frontmatter(filepath, git_root)
+        if git_status == "D"
+        else get_file_frontmatter(str(full))
+    )
     if not fm:
         return False
 
-    cls = _get_class(fm)
-
-    # Works — anything with a work-stage field
+    # Works — anything carrying a work-stage field, regardless of class value
     if "work-stage" in fm:
-        status = fm.get("work-stage", "")
-        title = fm.get("sort-title") or fm.get("title") or full.stem
+        status = _get_string_from_fm(fm.get("work-stage"))
+        title = _get_string_from_fm(fm.get("sort-title")) or _get_string_from_fm(fm.get("title")) or full.stem
         if git_status == "R":
             stats["works"]["updated"].append((filepath, title, status, old_filepath))
-        else:
-            bucket = {"A": "added", "M": "updated"}.get(git_status)
-            if bucket:
-                if bucket == "updated":
-                    stats["works"]["updated"].append((filepath, title, status, None))
-                else:
-                    stats["works"]["added"].append((filepath, title, status))
-                if status in stats["works"]["by_status"]:
-                    stats["works"]["by_status"][status] += 1
-            else:
-                stats["works"]["removed"].append(filepath)
+        elif git_status == "A":
+            stats["works"]["added"].append((filepath, title, status, None))
+            if status in stats["works"]["by_status"]:
+                stats["works"]["by_status"][status] += 1
+        elif git_status == "M":
+            stats["works"]["updated"].append((filepath, title, status, None))
+            if status in stats["works"]["by_status"]:
+                stats["works"]["by_status"][status] += 1
+        else:  # D
+            stats["works"]["removed"].append(filepath)
         return True
 
-    # Author cards
-    if cls == "author":
-        name = full.stem
-        if git_status == "R":
-            stats["authors"]["updated"].append((filepath, name, old_filepath))
-        else:
-            bucket = {"A": "added", "M": "updated"}.get(git_status)
-            if bucket:
-                if bucket == "updated":
-                    stats["authors"]["updated"].append((filepath, name, None))
-                else:
-                    stats["authors"]["added"].append((filepath, name))
-            else:
-                stats["authors"]["removed"].append(filepath)
+    if matches_class_filter(fm, "author"):
+        _route_entity(filepath, full.stem, git_status, old_filepath, stats["authors"])
         return True
 
-    # Publication cards (library publication only)
-    if cls == "collection":
-        name = full.stem
-        if git_status == "R":
-            stats["publications"]["updated"].append((filepath, name, old_filepath))
-        else:
-            bucket = {"A": "added", "M": "updated"}.get(git_status)
-            if bucket:
-                if bucket == "updated":
-                    stats["publications"]["updated"].append((filepath, name, None))
-                else:
-                    stats["publications"]["added"].append((filepath, name))
-            else:
-                stats["publications"]["removed"].append(filepath)
+    if matches_class_filter(fm, "collection"):
+        _route_entity(filepath, full.stem, git_status, old_filepath, stats["publications"])
         return True
 
-    # Definition cards
-    if cls == "entry":
-        word = full.stem
-        aliases = fm.get("aliases") or []
-        if isinstance(aliases, str):
-            aliases = [aliases]
+    if matches_class_filter(fm, "entry"):
+        raw_aliases = fm.get("aliases") or []
+        aliases = [raw_aliases] if isinstance(raw_aliases, str) else list(raw_aliases)
         if git_status == "R":
-            stats["definitions"]["updated"].append((filepath, word, aliases, old_filepath))
-        else:
-            bucket = {"A": "added", "M": "updated"}.get(git_status)
-            if bucket:
-                if bucket == "updated":
-                    stats["definitions"]["updated"].append((filepath, word, aliases, None))
-                else:
-                    stats["definitions"]["added"].append((filepath, word, aliases))
-            else:
-                stats["definitions"]["removed"].append(filepath)
+            stats["definitions"]["updated"].append((filepath, full.stem, aliases, old_filepath))
+        elif git_status == "A":
+            stats["definitions"]["added"].append((filepath, full.stem, aliases, None))
+        elif git_status == "M":
+            stats["definitions"]["updated"].append((filepath, full.stem, aliases, None))
+        else:  # D
+            stats["definitions"]["removed"].append(filepath)
         return True
 
     return False
 
 
-def _analyse_catalog_changes(changes: dict, git_root: Path) -> dict:
+def _analyse_catalog_changes(changes: GitChanges, git_root: Path) -> LibraryStats:
     """
-    Route changed .md files into named class buckets:
-      works        — files with work-stage field, bucketed by status
+    Route all changed .md files into named class buckets:
+      works        — files carrying work-stage, bucketed by status
       authors      — class: author
       publications — class: collection
       definitions  — class: entry (word + aliases surfaced)
 
-    Anything not claimed by a named class falls through to generic sections.
+    Files not claimed by any named class fall through to the generic
+    sections in _build_body(). Pass processed_changes, not raw git changes.
     """
-    stats = {
-        "works": {
-            "added":     [],   # (filepath, title, status)
-            "updated":   [],   # (filepath, title, status, old_filepath|None)
-            "removed":   [],
+    stats = LibraryStats(
+        works = {
+            "added": [],   # (filepath, title, status)
+            "updated": [],   # (filepath, title, status, old_filepath|None)
+            "removed": [],
             "by_status": {s: 0 for s in WORK_STAGES},
         },
-        "authors": {
-            "added":   [],    # (filepath, name)
+        authors = {
+            "added": [],    # (filepath, name)
             "updated": [],    # (filepath, name, old_filepath|None)
             "removed": [],
         },
-        "publications": {
-            "added":   [],    # (filepath, name)
+        publications = {
+            "added": [],    # (filepath, name)
             "updated": [],    # (filepath, name, old_filepath|None)
             "removed": [],
         },
-        "definitions": {
-            "added":   [],    # (filepath, word, aliases)
+        definitions = {
+            "added": [],    # (filepath, word, aliases)
             "updated": [],    # (filepath, word, aliases, old_filepath|None)
             "removed": [],
         },
-    }
+    )
 
-    for filepath in changes["A"]:
-        _process_file(filepath, git_root, "A", stats)
-    for filepath in changes["M"]:
-        _process_file(filepath, git_root, "M", stats)
-    for filepath in changes["D"]:
-        _process_file(filepath, git_root, "D", stats)
+    for fp in changes["A"]:
+        _route_file_into_stats(fp, git_root, "A", stats)
+    for fp in changes["M"]:
+        _route_file_into_stats(fp, git_root, "M", stats)
+    for fp in changes["D"]:
+        _route_file_into_stats(fp, git_root, "D", stats)
     for old_path, new_path in changes["R"]:
-        _process_file(new_path, git_root, "R", stats, old_filepath=old_path)
+        _route_file_into_stats(new_path, git_root, "R", stats, old_filepath=old_path)
 
     return stats
 
 
 # ---------------------------------------------------------------------------
-# Catalog dashboard
+# Catalog snapshot
 # ---------------------------------------------------------------------------
 
 def _get_works_dir(git_root: Path) -> Path:
-    """
-    Return the works directory from .archivist config, defaulting to 'works'.
-    """
+    """Return the works directory from .archivist config, defaulting to 'works'."""
     config = read_archivist_config(git_root) or {}
     return git_root / config.get("works-dir", "works")
 
 
-def _extract_author_name(val: str) -> str:
-    """Strip Obsidian wikilink brackets from an author value."""
+def _unwrap_wikilink(val: str) -> str:
+    """Strip Obsidian wikilink brackets from a string value."""
     val = val.strip()
-    if val.startswith("[[") and val.endswith("]]"):
-        return val[2:-2].strip()
-    return val
+    return val[2:-2].strip() if val.startswith("[[") and val.endswith("]]") else val
 
 
-def _get_previous_stage(filepath: str, git_root: Path) -> str | None:
-    """
-    Read work-stage from the last-committed version of a file.
-    Returns None if the file is new or has no work-stage in HEAD.
-    """
-    try:
-        content = subprocess.check_output(
-            ["git", "show", f"HEAD:{filepath}"],
-            stderr=subprocess.PIPE, text=True, cwd=git_root,
-        )
-    except subprocess.CalledProcessError:
-        return None
-
-    if not content.startswith("---"):
-        return None
-    end = content.find("\n---", 3)
-    if end == -1:
-        return None
-    try:
-        import yaml
-        fm = yaml.safe_load(content[3:end].strip()) or {}
-        val = fm.get("work-stage")
-        return str(val).strip() if val else None
-    except Exception:
-        return None
-
-
-def _scan_catalog(works_dir: Path, git_root: Path) -> dict:
+def _scan_catalog(works_dir: Path) -> CatalogScanResult:
     """
     Walk works_dir and build a full-catalog snapshot:
       stage_counts     — work count per work-stage across the entire catalog
@@ -327,26 +356,27 @@ def _scan_catalog(works_dir: Path, git_root: Path) -> dict:
       velocity         — {YYYY-MM: count} for date-consumed in rolling 12 months
       placeholder_debt — placeholder works with no date-consumed
       total_works      — total files with work-stage
-    """
-    from collections import defaultdict
 
+    Returns a zero-value snapshot dict if works_dir doesn't exist rather
+    than exploding. Don't be precious about missing directories.
+    """
     now = datetime.now()
     cutoff = datetime(now.year - 1, now.month, 1)
 
     stage_counts = {s: 0 for s in WORK_STAGES}
-    author_counts = defaultdict(int)
-    velocity = defaultdict(int)
-    placeholder_debt = 0
-    total_works = 0
+    author_counts: dict[str, int] = defaultdict(int)
+    velocity: dict[str, int] = defaultdict(int)
+    placeholder_debt: int = 0
+    total_works: int = 0
 
     if not works_dir.exists():
-        return {
-            "stage_counts": stage_counts,
-            "author_counts": {},
-            "velocity": {},
-            "placeholder_debt": 0,
-            "total_works": 0,
-        }
+        return CatalogScanResult(
+            stage_counts = stage_counts,
+            author_counts = {},
+            velocity = {},
+            placeholder_debt = 0,
+            total_works = 0,
+        )
 
     for md_file in works_dir.rglob("*.md"):
         fm = get_file_frontmatter(str(md_file))
@@ -363,7 +393,7 @@ def _scan_catalog(works_dir: Path, git_root: Path) -> dict:
         if isinstance(raw_authors, str):
             raw_authors = [raw_authors]
         for a in raw_authors:
-            name = _extract_author_name(str(a))
+            name = _unwrap_wikilink(str(a))
             if name:
                 author_counts[name] += 1
 
@@ -375,52 +405,50 @@ def _scan_catalog(works_dir: Path, git_root: Path) -> dict:
             if not d:
                 continue
             try:
-                if isinstance(d, str):
-                    consumed = datetime.strptime(d[:10], "%Y-%m-%d")
-                else:
-                    # yaml may parse YYYY-MM-DD as a date object
-                    from datetime import date as date_type
-                    if isinstance(d, date_type):
-                        consumed = datetime(d.year, d.month, d.day)
-                    else:
-                        continue
+                consumed = (
+                    datetime(d.year, d.month, d.day)
+                    if isinstance(d, date_type)
+                    else datetime.strptime(str(d)[:10], "%Y-%m-%d")
+                )
                 if consumed >= cutoff:
-                    key = consumed.strftime("%Y-%m")
-                    velocity[key] += 1
+                    velocity[consumed.strftime("%Y-%m")] += 1
             except (ValueError, AttributeError):
                 continue
 
         # Placeholder debt
         if stage == "placeholder":
-            has_consumed = any(
-                bool(d) for d in (
-                    [fm.get("date-consumed")]
-                    if not isinstance(fm.get("date-consumed"), list)
-                    else fm.get("date-consumed") or []
-                )
+            consumed_val = fm.get("date-consumed")
+            has_consumed = bool(
+                any(consumed_val) if isinstance(consumed_val, list) else consumed_val
             )
             if not has_consumed:
                 placeholder_debt += 1
 
-    return {
-        "stage_counts": stage_counts,
-        "author_counts": dict(sorted(author_counts.items(), key=lambda x: x[1], reverse=True)),
-        "velocity": dict(sorted(velocity.items())),
-        "placeholder_debt": placeholder_debt,
-        "total_works": total_works,
-    }
+    return CatalogScanResult(
+        stage_counts = stage_counts,
+        author_counts = dict(
+            sorted(
+                author_counts.items(),
+                key = lambda kv: kv[1],
+                reverse = True
+            )
+        ),
+        velocity = dict(sorted(velocity.items())),
+        placeholder_debt = placeholder_debt,
+        total_works = total_works,
+    )
 
 
-def _detect_throughput(changes: dict, git_root: Path) -> list:
+def _detect_throughput(changes: GitChanges, git_root: Path) -> list[tuple[str, str, str]]:
     """
     Detect work-stage transitions among modified and renamed files this commit.
     Returns list of (title, old_stage, new_stage) for files where stage changed.
     """
-    transitions = []
-
-    candidates = [(fp, fp) for fp in changes["M"]] + \
-                 [(old, new) for old, new in changes["R"]]
-
+    transitions: list[tuple[str, str, str]] = []
+    candidates = (
+        [(fp, fp) for fp in changes["M"]]
+        + [(old, new) for old, new in changes["R"]]
+    )
     for old_path, new_path in candidates:
         full = git_root / new_path
         if full.suffix != ".md":
@@ -432,21 +460,21 @@ def _detect_throughput(changes: dict, git_root: Path) -> list:
         old_stage = _get_previous_stage(old_path, git_root)
         if old_stage and old_stage != new_stage:
             title = fm.get("sort-title") or fm.get("title") or full.stem
-            transitions.append((title, old_stage, new_stage))
-
+            transitions.append((str(title), old_stage, new_stage))
     return transitions
 
 
-def _build_catalog_snapshot(snapshot: dict, throughput: list) -> str:
+def _build_catalog_snapshot(snapshot: CatalogScanResult, throughput: list[tuple[str, str, str]]) -> str:
     """
     Build the ## Catalog Snapshot section as a static Mermaid-rendered string.
-    All data is computed at generation time and frozen in the changelog.
+    All data is computed at generation time and frozen in the changelog — this
+    is a point-in-time record, not a live dashboard.
     """
     stage_counts = snapshot["stage_counts"]
     author_counts = snapshot["author_counts"]
     velocity = snapshot["velocity"]
     debt = snapshot["placeholder_debt"]
-    total = snapshot["total_works"]
+    total: int = snapshot["total_works"]
 
     # --- Stage Distribution pie ---
     if total > 0:
@@ -454,7 +482,10 @@ def _build_catalog_snapshot(snapshot: dict, throughput: list) -> str:
             f'    "{s.capitalize()}" : {c}'
             for s, c in stage_counts.items() if c > 0
         )
-        stage_chart = f"```mermaid\npie title Stage Distribution — {total} works\n{stage_entries}\n```"
+        stage_chart = (
+            f"```mermaid\npie title Stage Distribution — {total} works\n"
+            f"{stage_entries}\n```"
+        )
     else:
         stage_chart = "*No works found in catalog.*"
 
@@ -472,16 +503,14 @@ def _build_catalog_snapshot(snapshot: dict, throughput: list) -> str:
     else:
         throughput_block = "*No stage transitions this commit.*"
 
-    # --- Author Landscape pie — cap at 8 to avoid palette cycling ---
-    AUTHOR_PIE_CAP = 8
     if author_counts:
-        top = list(author_counts.items())[:AUTHOR_PIE_CAP]
-        others = sum(c for _, c in list(author_counts.items())[AUTHOR_PIE_CAP:])
-        if others:
-            top.append((f"Others ({len(author_counts) - AUTHOR_PIE_CAP} authors)", others))
+        top = list(author_counts.items())[:_AUTHOR_PIE_CAP]
+        overflow_count = len(author_counts) - _AUTHOR_PIE_CAP
+        others_total = sum(c for _, c in list(author_counts.items())[_AUTHOR_PIE_CAP:])
+        if others_total:
+            top.append((f"Others ({overflow_count} authors)", others_total))
         author_entries = "\n".join(
-            f'    "{name}" : {count}'
-            for name, count in top
+            f'    "{name}" : {count}' for name, count in top
         )
         author_chart = f"```mermaid\npie title Author Landscape\n{author_entries}\n```"
     else:
@@ -489,21 +518,18 @@ def _build_catalog_snapshot(snapshot: dict, throughput: list) -> str:
 
     # --- Reading Velocity bar chart ---
     if velocity:
-        # Build month range from oldest entry in window to today
-        from datetime import date as date_type
         now = datetime.now()
-        oldest_key = min(velocity.keys())
-        oldest = datetime.strptime(oldest_key, "%Y-%m")
+        oldest = datetime.strptime(min(velocity.keys()), "%Y-%m")
 
-        months = []
+        months: list[str] = []
         cur = oldest
         while cur <= now:
             months.append(cur.strftime("%Y-%m"))
-            # Advance one month
-            if cur.month == 12:
-                cur = datetime(cur.year + 1, 1, 1)
-            else:
-                cur = datetime(cur.year, cur.month + 1, 1)
+            cur = (
+                datetime(cur.year + 1, 1, 1)
+                if cur.month == 12
+                else datetime(cur.year, cur.month + 1, 1)
+            )
 
         labels = [datetime.strptime(m, "%Y-%m").strftime("%b %y") for m in months]
         values = [velocity.get(m, 0) for m in months]
@@ -550,50 +576,43 @@ def _build_catalog_snapshot(snapshot: dict, throughput: list) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Frontmatter builder
+# Post-changes hook
 # ---------------------------------------------------------------------------
 
-def _build_frontmatter(
-    commit_sha: str | None,
-    num_modified: int,
-    num_added: int,
-    num_archived: int,
-    lib_stats: dict,
-    git_root: Path,
-) -> str:
-    today = datetime.now().strftime("%Y-%m-%d")
+def _analyse_catalog(ctx: ChangelogContext) -> None:
+    """
+    Analyse the diff for catalog-specific content and build the snapshot.
+    Runs after the base runner has processed renames. Stores results in
+    ctx.data for use by _build_frontmatter() and _build_body().
+    """
+    ctx.data["lib_stats"] = _analyse_catalog_changes(ctx.processed_changes, ctx.git_root)
+    works_dir = _get_works_dir(ctx.git_root)
+    snapshot: CatalogScanResult = _scan_catalog(works_dir)
+    throughput = _detect_throughput(ctx.processed_changes, ctx.git_root)
+    ctx.data["snapshot_block"] = _build_catalog_snapshot(snapshot, throughput)
 
-    auto = {
-        "class":               "archive",
-        "category":            ["changelog"],
-        "log-scope":           "library",
-        "modified":            today,
-        "commit-sha":          commit_sha or "",
-        "files-modified":      num_modified,
-        "files-created":       num_added,
-        "files-archived":      num_archived,
-        "works-added":         len(lib_stats["works"]["added"]),
-        "works-updated":       len(lib_stats["works"]["updated"]),
-        "works-removed":       len(lib_stats["works"]["removed"]),
-        "authors-added":       len(lib_stats["authors"]["added"]),
-        "authors-updated":     len(lib_stats["authors"]["updated"]),
-        "publications-added":  len(lib_stats["publications"]["added"]),
-        "definitions-added":   len(lib_stats["definitions"]["added"]),
-        "tags":                [_get_project_name(git_root)],
-    }
 
-    def render_field(key, value):
-        if isinstance(value, list):
-            if not value:
-                return [f"{key}: []"]
-            return [f"{key}:"] + [f"  - {item}" for item in value]
-        return [f"{key}: {value}"]
+# ---------------------------------------------------------------------------
+# Shared annotation helper
+# ---------------------------------------------------------------------------
 
-    lines = ["---"]
-    for key, value in auto.items():
-        lines.extend(render_field(key, value))
-    lines.append("---")
-    return "\n".join(lines)
+def _build_rename_annotation(old_filepath: str | None, filepath: str) -> str:
+    """
+    Return the move/rename annotation string for a library entry.
+
+    Mirrors the logic in format_file_list() — same two-verb contract:
+      "renamed from" — same-directory name change, shows old filename only.
+      "moved from"   — file crossed directories, shows full old path.
+
+    Called by _work_list, _entity_list, and _definition_list so we're not
+    copy-pasting the same fucking branch three times.
+    """
+    if old_filepath is None:
+        return ""
+    suspicion = rename_suspicion(old_filepath, filepath)
+    if is_cross_dir_move(old_filepath, filepath):
+        return f" *(moved from `{rename_display_path(old_filepath, filepath)}`)*{suspicion}"
+    return f" *(renamed from `{rename_display_path(old_filepath, filepath)}`)*{suspicion}"
 
 
 # ---------------------------------------------------------------------------
@@ -601,23 +620,18 @@ def _build_frontmatter(
 # ---------------------------------------------------------------------------
 
 def _work_list(
-    works: list,
+    works: list[WorkEntry],
     fallback: str,
-    descriptions: dict = None
+    descriptions: dict[str, str | list[str]]
 ) -> str:
-    if descriptions is None:
-        descriptions = {}
+    """Render (filepath, title, status[, old_filepath]) work entries."""
     if not works:
         return f"- {fallback}\n"
-    lines = []
+    lines: list[str] = []
     for entry in works:
         filepath, title, status = entry[0], entry[1], entry[2]
         old_filepath = entry[3] if len(entry) > 3 else None
-        rename_str = (
-            f" *(renamed from `{clean_filename(old_filepath)}`)*"
-            f"{rename_suspicion(old_filepath, filepath)}"
-            if old_filepath else ""
-        )
+        rename_str = _build_rename_annotation(old_filepath, filepath)
         desc = descriptions.get(filepath)
         if desc is None:
             lines.append(f"- **{title}** — `{status}`{rename_str} — [description]\n")
@@ -632,25 +646,18 @@ def _work_list(
 
 
 def _entity_list(
-    entries: list,
+    entries: list[EntityEntry],
     fallback: str,
-    descriptions: dict = None
+    descriptions: dict[str, str | list[str]]
 ) -> str:
-    """Render (filepath, name[, old_filepath]) author/publication entries."""
-    if descriptions is None:
-        descriptions = {}
+    """Render (filepath, name[, old_filepath]) author or publication entries."""
     if not entries:
         return f"- {fallback}\n"
-    lines = []
+    lines: list[str] = []
     for entry in entries:
-        filepath = entry[0]
-        name = entry[1]
+        filepath, name = entry[0], entry[1]
         old_filepath = entry[2] if len(entry) > 2 else None
-        rename_str = (
-            f" *(renamed from `{clean_filename(old_filepath)}`)*"
-            f"{rename_suspicion(old_filepath, filepath)}"
-            if old_filepath else ""
-        )
+        rename_str = _build_rename_annotation(old_filepath, filepath)
         desc = descriptions.get(filepath)
         if desc is None:
             lines.append(f"- **{name}**{rename_str} — [description]\n")
@@ -665,26 +672,19 @@ def _entity_list(
 
 
 def _definition_list(
-    entries: list,
+    entries: list[DefinitionEntry],
     fallback: str,
-    descriptions: dict = None
+    descriptions: dict[str, str | list[str]]
 ) -> str:
     """Render (filepath, word, aliases[, old_filepath]) definition entries."""
-    if descriptions is None:
-        descriptions = {}
     if not entries:
         return f"- {fallback}\n"
-    lines = []
+    lines: list[str] = []
     for entry in entries:
-        filepath = entry[0]
-        word, aliases = entry[1], entry[2]
+        filepath, word, aliases = entry[0], entry[1], entry[2]
         old_filepath = entry[3] if len(entry) > 3 else None
         alias_str = f" *(also: {', '.join(aliases)})*" if aliases else ""
-        rename_str = (
-            f" *(renamed from `{clean_filename(old_filepath)}`)*"
-            f"{rename_suspicion(old_filepath, filepath)}"
-            if old_filepath else ""
-        )
+        rename_str = _build_rename_annotation(old_filepath, filepath)
         desc = descriptions.get(filepath)
         if desc is None:
             lines.append(f"- **{word}**{alias_str}{rename_str} — [description]\n")
@@ -698,12 +698,14 @@ def _definition_list(
     return "".join(lines)
 
 
-def _removed_list(filepaths: list, fallback: str, descriptions: dict = None) -> str:
-    if descriptions is None:
-        descriptions = {}
+def _removed_list(
+    filepaths: list[str],
+    fallback: str,
+    descriptions: dict[str, str | list[str]]
+) -> str:
     if not filepaths:
         return f"- {fallback}\n"
-    lines = []
+    lines: list[str] = []
     for f in filepaths:
         name = clean_filename(f)
         desc = descriptions.get(f)
@@ -719,12 +721,14 @@ def _removed_list(filepaths: list, fallback: str, descriptions: dict = None) -> 
     return "".join(lines)
 
 
-def _file_list(files: list, fallback: str, descriptions: dict = None) -> str:
-    if descriptions is None:
-        descriptions = {}
+def _other_file_list(
+    files: list[str],
+    fallback: str,
+    descriptions: dict[str, str | list[str]]
+) -> str:
     if not files:
         return f"- {fallback}\n"
-    lines = []
+    lines: list[str] = []
     for f in files:
         desc = descriptions.get(f, "[description]")
         if isinstance(desc, list):
@@ -738,31 +742,59 @@ def _file_list(files: list, fallback: str, descriptions: dict = None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Body builder
+# Builders
 # ---------------------------------------------------------------------------
 
-def _build_body(
-    changes: dict,
-    lib_stats: dict,
-    commit_sha: str | None,
-    descriptions: dict,
-    user_content: str | None,
-    snapshot_block: str,
-) -> str:
-    today = datetime.now().strftime("%Y-%m-%d")
+def _build_frontmatter(ctx: ChangelogContext) -> str:
+    lib_stats: LibraryStats = cast(LibraryStats, ctx.data["lib_stats"])
+    today = get_today()
+    auto = {
+        "class": "archive",
+        "category": ["changelog"],
+        "log-scope": "library",
+        "modified": today,
+        "UUID": ctx.changelog_uuid,
+        "commit-sha": ctx.args.commit_sha or "",
+        "files-modified": len(ctx.modified),
+        "files-created": len(ctx.changes["A"]),
+        "files-archived": len(ctx.true_deleted),
+        "works-added": len(lib_stats["works"]["added"]),
+        "works-updated": len(lib_stats["works"]["updated"]),
+        "works-removed": len(lib_stats["works"]["removed"]),
+        "authors-added": len(lib_stats["authors"]["added"]),
+        "authors-updated": len(lib_stats["authors"]["updated"]),
+        "publications-added": len(lib_stats["publications"]["added"]),
+        "definitions-added": len(lib_stats["definitions"]["added"]),
+        "tags": [get_project_name(ctx.git_root)],
+    }
+    lines = ["---"]
+    for key, value in auto.items():
+        lines.extend(render_field(key, value))
+    lines.append("---")
+    return "\n".join(lines)
 
-    # Collect all claimed filepaths to exclude from generic sections
-    claimed = set()
-    for group in lib_stats.values():
-        for bucket in ("added", "updated", "removed"):
-            for entry in group.get(bucket, []):
+
+def _build_body(ctx: ChangelogContext) -> str:
+    lib_stats: LibraryStats = cast(LibraryStats, ctx.data["lib_stats"])
+    snapshot_block: CatalogScanResult = cast(CatalogScanResult, ctx.data["snapshot_block"])
+    descriptions = ctx.descriptions or {}
+    commit_sha = ctx.args.commit_sha
+    today = get_today()
+
+    # Collect claimed filepaths to exclude from the generic sections
+    claimed: set[str] = set()
+    for bucket in lib_stats.values():
+        group: AnyStatsBucket = cast(AnyStatsBucket, bucket)
+        for bucket_key in ("added", "updated", "removed"):
+            entries: list[AnyEntry] = cast(list[AnyEntry], group.get(bucket_key, []))
+            for entry in entries:
                 claimed.add(entry[0] if isinstance(entry, tuple) else entry)
                 if isinstance(entry, tuple) and len(entry) >= 4 and entry[-1]:
-                    claimed.add(entry[-1])  # old_filepath for renames
+                    claimed.add(entry[-1])
 
-    other_added   = [f for f in changes["A"] if f not in claimed]
-    other_updated = [f for f in changes["M"] if f not in claimed]
-    other_removed = [f for f in changes["D"] if f not in claimed]
+    other_added = [f for f in ctx.processed_changes["A"] if f not in claimed]
+    other_updated = [f for f in ctx.processed_changes["M"] if f not in claimed]
+    other_removed = [f for f in ctx.processed_changes["D"] if f not in claimed]
 
     works = lib_stats["works"]
     authors = lib_stats["authors"]
@@ -770,8 +802,7 @@ def _build_body(
     defs = lib_stats["definitions"]
     by_status = works["by_status"]
 
-    user_block = user_content if user_content is not None else """
-
+    user_block = ctx.user_content if ctx.user_content is not None else """
 ## Notes
 
 
@@ -849,15 +880,54 @@ def _build_body(
 ## Other File Changes
 
 ### Files Added
-{_file_list(other_added, "None", descriptions)}
+{_other_file_list(other_added, "None", descriptions)}
 ### Files Modified
-{_file_list(other_updated, "None", descriptions)}
+{_other_file_list(other_updated, "None", descriptions)}
 ### Files Removed
-{_file_list(other_removed, "None", descriptions)}
+{_other_file_list(other_removed, "None", descriptions)}
 
 <!-- archivist:auto-end -->
 {user_block}
 """
+
+
+def _print_summary(ctx: ChangelogContext) -> None:
+    lib_stats: LibraryStats = cast(LibraryStats, ctx.data["lib_stats"])
+    works = lib_stats["works"]
+    authors = lib_stats["authors"]
+    pubs = lib_stats["publications"]
+    defs = lib_stats["definitions"]
+    by_status = works["by_status"]
+
+    print(f"  Project       : {get_project_name(ctx.git_root)}")
+    print(
+        f"  Works         : {len(works['added'])} added, "
+        f"{len(works['updated'])} updated, {len(works['removed'])} removed"
+    )
+    print(
+        f"  Status counts : "
+        + ", ".join(f"{s}={by_status[s]}" for s in WORK_STAGES)
+    )
+    print(
+        f"  Authors       : {len(authors['added'])} added, "
+        f"{len(authors['updated'])} updated, {len(authors['removed'])} removed"
+    )
+    print(
+        f"  Publications  : {len(pubs['added'])} added, "
+        f"{len(pubs['updated'])} updated, {len(pubs['removed'])} removed"
+    )
+    print(
+        f"  Definitions   : {len(defs['added'])} added, "
+        f"{len(defs['updated'])} updated, {len(defs['removed'])} removed"
+    )
+    print(
+        f"  Files total   : {len(ctx.changes['A'])} added, "
+        f"{len(ctx.modified)} modified, {len(ctx.true_deleted)} archived"
+    )
+    if ctx.args.commit_sha:
+        print(f"  SHA           : {ctx.args.commit_sha}")
+    else:
+        print("  SHA           : (staged — backfilled by post-commit hook)")
 
 
 # ---------------------------------------------------------------------------
@@ -865,89 +935,11 @@ def _build_body(
 # ---------------------------------------------------------------------------
 
 def run(args: argparse.Namespace) -> None:
-    git_root = get_repo_root()
-    print(f"  📁 Repo root : {git_root}")
-    output_dir = _find_output_dir(git_root)
-    print(f"  📁 Output dir: {output_dir}")
-
-    if not args.dry_run:
-        ensure_staged(None, git_root)
-
-    changes = _get_git_changes(args.commit_sha)
-
-    dir_renames = detect_dir_renames(changes["R"])
-    true_deleted, dir_renamed_files = reassign_deletions(changes["D"], dir_renames)
-    all_renames = changes["R"] + dir_renamed_files
-    modified = changes["M"] + [new for _, new in all_renames]
-    report_changes(changes, modified, true_deleted)
-
-    num_modified = len(modified)
-    num_added = len(changes["A"])
-    num_archived = len(true_deleted)
-
-    # Feed processed changes downstream so catalog analysis and throughput
-    # detection see the corrected D and R lists
-    processed_changes = {
-        "M": changes["M"],
-        "A": changes["A"],
-        "D": true_deleted,
-        "R": all_renames,
-    }
-
-    lib_stats = _analyse_catalog_changes(processed_changes, git_root)
-
-    works_dir = _get_works_dir(git_root)
-    snapshot = _scan_catalog(works_dir, git_root)
-    throughput = _detect_throughput(processed_changes, git_root)
-    snapshot_block = _build_catalog_snapshot(snapshot, throughput)
-
-    today = datetime.now().strftime("%Y-%m-%d")
-    output_path = output_dir / f"CHANGELOG-{today}.md"
-
-    existing = find_active_changelog(output_dir)
-    descriptions = {}
-    user_content = None
-    if existing:
-        print(f"  🔍 Found existing changelog: {existing.name} — updating in place")
-        existing_text = existing.read_text()
-        descriptions = extract_descriptions(existing_text)
-        user_content = extract_user_content(existing_text)
-        output_path = existing
-    else:
-        print(f"  🆕 No existing changelog found — creating {output_path.name}")
-
-    frontmatter = _build_frontmatter(
-        args.commit_sha,
-        num_modified, num_added, num_archived,
-        lib_stats, git_root,
+    run_changelog(
+        args,
+        module_type = "library",
+        build_frontmatter = _build_frontmatter,
+        build_body = _build_body,
+        post_changes = _analyse_catalog,
+        print_summary = _print_summary,
     )
-    body = _build_body(
-        processed_changes, lib_stats,
-        args.commit_sha, descriptions, user_content,
-        snapshot_block,
-    )
-    changelog_content = frontmatter + body
-
-    if args.dry_run:
-        print("=== DRY RUN — no file written ===\n")
-        print(changelog_content)
-        print(f"\n=== Would write to: {output_path} ===")
-    else:
-        write_changelog(output_path, changelog_content, existing=bool(existing))
-
-    works = lib_stats["works"]
-    authors = lib_stats["authors"]
-    pubs = lib_stats["publications"]
-    defs = lib_stats["definitions"]
-
-    print(f"  Project       : {_get_project_name(git_root)}")
-    print(f"  Works         : {len(works['added'])} added, {len(works['updated'])} updated, {len(works['removed'])} removed")
-    print(f"  Status counts : placeholder={works['by_status']['placeholder']}, raw={works['by_status']['raw']}, active={works['by_status']['active']}, processed={works['by_status']['processed']}, shelved={works['by_status']['shelved']}")
-    print(f"  Authors       : {len(authors['added'])} added, {len(authors['updated'])} updated, {len(authors['removed'])} removed")
-    print(f"  Publications  : {len(pubs['added'])} added, {len(pubs['updated'])} updated, {len(pubs['removed'])} removed")
-    print(f"  Definitions   : {len(defs['added'])} added, {len(defs['updated'])} updated, {len(defs['removed'])} removed")
-    print(f"  Files total   : {num_added} added, {num_modified} modified, {num_archived} archived")
-    if args.commit_sha:
-        print(f"  SHA           : {args.commit_sha}")
-    else:
-        print("  SHA           : (staged — backfilled by post-commit hook)")

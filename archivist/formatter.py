@@ -13,6 +13,11 @@ import argparse
 import os
 import shutil
 import sys
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from argparse import _MutuallyExclusiveGroup # type: ignore[import]
 
 # ── ANSI escape codes ────────────────────────────────────────────────────────
 
@@ -77,7 +82,11 @@ def fmt_warning(text: str) -> str:
     Build a formatted WARNING block for use in epilog=.
     """
     ansi = _ansi_ok()
-    label = _esc(BOLD + YELLOW, "WARNING", ansi)
+    label = _esc(
+        BOLD + YELLOW,
+        "WARNING",
+        ansi
+    )
     return f"\n{label}\n  {text}"
 
 
@@ -102,13 +111,26 @@ class ArchivistHelpFormatter(argparse.RawDescriptionHelpFormatter):
     ) -> None:
         if width is None:
             width = min(shutil.get_terminal_size((100, 24)).columns, 100)
-        super().__init__(prog, indent_increment, max_help_position, width)
+        super().__init__(
+            prog,
+            indent_increment,
+            max_help_position,
+            width
+        )
         self._use_ansi = _ansi_ok()
 
     # ── internal helper ───────────────────────────────────────────────────────
 
-    def _c(self, code: str, text: str) -> str:
-        return _esc(code, text, self._use_ansi)
+    def _c(
+        self,
+        code: str,
+        text: str
+    ) -> str:
+        return _esc(
+            code,
+            text,
+            self._use_ansi
+        )
 
     # ── section headings ──────────────────────────────────────────────────────
 
@@ -126,9 +148,9 @@ class ArchivistHelpFormatter(argparse.RawDescriptionHelpFormatter):
 
     def _format_usage(
         self,
-        usage: str,
-        actions: list,
-        groups: list,
+        usage: str | None,
+        actions: Iterable[argparse.Action],
+        groups: Iterable["_MutuallyExclusiveGroup"],
         prefix: str | None,
     ) -> str:
         if prefix is None:

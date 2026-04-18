@@ -7,68 +7,33 @@ a commit SHA in the archive DB (no edition directory required).
 """
 
 import argparse
-import re
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from archivist.utils import (
+    GitChanges,
+    clean_filename,
     ensure_staged,
+    error,
     extract_descriptions,
     extract_user_content,
     find_todays_manifest,
     get_db_path,
     get_file_class,
     get_file_frontmatter,
+    get_git_changes,
     get_repo_root,
+    get_today,
     init_db,
+    matches_class_filter,
+    print_dry_run_header,
+    progress,
+    render_field,
+    safe_read_markdown,
+    safe_write_markdown,
+    warning,
 )
-
-
-# ---------------------------------------------------------------------------
-# Git helpers
-# ---------------------------------------------------------------------------
-
-def _get_git_changes(scope_path: Path, commit_sha: str | None, git_root: Path) -> dict:
-    """
-    Get file changes from git, scoped to scope_path.
-    Uses diff-tree for a committed SHA, or diff-index --cached for staged changes.
-    """
-    try:
-        rel_scope = scope_path.relative_to(git_root)
-    except ValueError:
-        print(
-            f"Error: Edition path '{scope_path}' is not inside the git repo at '{git_root}'.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    if commit_sha:
-        cmd = ["git", "-c", "core.quotepath=false", "diff-tree",
-               "--name-status", "-M", "-r", commit_sha, "--", str(rel_scope)]
-    else:
-        cmd = ["git", "-c", "core.quotepath=false", "diff-index",
-               "--cached", "--name-status", "-M", "HEAD", "--", str(rel_scope)]
-
-    try:
-        output = subprocess.check_output(cmd, stderr=subprocess.PIPE, text=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Error running git command: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    changes = {"M": [], "A": [], "D": [], "R": []}
-    for line in output.strip().splitlines():
-        if not line:
-            continue
-        parts = line.split("\t")
-        status = parts[0].strip()[0]
-        if status == "R" and len(parts) == 3:
-            changes["R"].append((parts[1].strip(), parts[2].strip()))
-        elif status in changes:
-            changes[status].append(parts[-1].strip())
-
-    return changes
 
 
 # ---------------------------------------------------------------------------
@@ -89,8 +54,8 @@ def _scan_edition_files(
         if p.is_file() and not p.name.endswith("-manifest.md")
     ]
 
-    column_files = []
-    edition_files = []
+    column_files: list[Path] = []
+    edition_files: list[Path] = []
 
     for f in all_files:
         cls = get_file_class(f)
@@ -102,10 +67,9 @@ def _scan_edition_files(
     publish_date = None
     if edition_files:
         if len(edition_files) > 1:
-            print(
-                f"Warning: Multiple class: edition files found; "
-                f"using publish-date from {edition_files[0].name}",
-                file=sys.stderr,
+            warning(
+                f"Multiple class: edition files found; "
+                f"using publish-date from {edition_files[0].name}"
             )
         fm = get_file_frontmatter(edition_files[0])
         if fm:
@@ -135,31 +99,24 @@ def _build_manifest_frontmatter(
     volume: str | None,
     publish_date: str | None,
 ) -> str:
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = get_today()
     wikilink = f'"{_edition_wikilink(edition_name)}"'
 
     auto = {
-        "class":              "archive",
-        "category":           ["manifest", "edition"],
-        "modified":           today,
-        "log-scope":          "edition",
-        "edition":            wikilink,
-        "commit-sha":         commit_sha or "",
-        "volume":             volume or "",
-        "publish-date":       publish_date or "",
+        "class": "archive",
+        "category": ["manifest", "edition"],
+        "modified": today,
+        "log-scope": "edition",
+        "edition": wikilink,
+        "commit-sha": commit_sha or "",
+        "volume": volume or "",
+        "publish-date": publish_date or "",
         "columns-published": num_columns + num_editions,
-        "assets-included":    num_assets,
-        "files-modified":     num_modified,
-        "files-created":      num_added,
-        "files-archived":     num_archived,
+        "assets-included": num_assets,
+        "files-modified": num_modified,
+        "files-created": num_added,
+        "files-archived": num_archived,
     }
-
-    def render_field(key, value):
-        if isinstance(value, list):
-            if not value:
-                return [f"{key}: []"]
-            return [f"{key}:"] + [f"  - {item}" for item in value]
-        return [f"{key}: {value}"]
 
     lines = ["---"]
     for key, value in auto.items():
@@ -172,15 +129,9 @@ def _build_manifest_frontmatter(
 # Manifest body builder
 # ---------------------------------------------------------------------------
 
-def _clean_filename(filepath: str) -> str:
-    p = Path(filepath)
-    stem = re.sub(r'[^a-zA-Z0-9]+$', '', p.stem)
-    return stem + p.suffix
-
-
 def _build_manifest_body(
     edition_name: str,
-    changes: dict,
+    changes: GitChanges,
     commit_sha: str | None,
     git_root: Path,
     num_assets: int,
@@ -188,48 +139,53 @@ def _build_manifest_body(
     num_editions: int,
     volume: str | None,
     publish_date: str | None,
-    descriptions: dict,
+    descriptions: dict[str, str | list[str]],
     user_content: str | None,
 ) -> str:
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = get_today()
     wikilink = _edition_wikilink(edition_name)
     num_published = num_columns + num_editions
 
-    def file_list(files, fallback):
+    def file_list(files: list[str], fallback: str) -> str:
         if not files:
             return f"- {fallback}\n"
-        lines = []
+        lines: list[str] = []
         for f in files:
-            desc = descriptions.get(_clean_filename(f)) or descriptions.get(f) or "[description]"
+            desc = descriptions.get(clean_filename(f)) or descriptions.get(f) or "[description]"
             if isinstance(desc, list):
-                lines.append(f"- `{_clean_filename(f)}`:")
+                lines.append(f"- `{clean_filename(f)}`:")
                 for item in desc:
                     lines.append(f"  - {item}")
                 lines.append("")
             else:
-                lines.append(f"- `{_clean_filename(f)}`: {desc}")
+                lines.append(f"- `{clean_filename(f)}`: {desc}")
         return "\n".join(lines) + "\n"
 
-    def rename_list(renames, fallback):
+    def rename_list(renames: list[tuple[str, str]], fallback: str) -> str:
         if not renames:
             return f"- {fallback}\n"
         return "".join(
-            f"- `{_clean_filename(old)}` → `{_clean_filename(new)}`\n"
+            f"- `{clean_filename(old)}` → `{clean_filename(new)}`\n"
             for old, new in renames
         )
 
-    def classify(filepath):
-        return get_file_class(git_root / filepath) or "asset"
+    def classify(filepath: str):
+        fm = get_file_frontmatter(git_root / filepath)
+        if fm and matches_class_filter(fm, "column"):
+            return "column"
+        if fm and matches_class_filter(fm, "edition"):
+            return "edition"
+        return "asset"
 
-    new_columns  = [f for f in changes["A"] if classify(f) == "column"]
-    new_editions  = [f for f in changes["A"] if classify(f) == "edition"]
-    new_assets    = [f for f in changes["A"] if classify(f) == "asset"]
-    mod_columns  = [f for f in changes["M"] if classify(f) == "column"]
-    mod_editions  = [f for f in changes["M"] if classify(f) == "edition"]
-    mod_assets    = [f for f in changes["M"] if classify(f) == "asset"]
-    moved         = changes["R"]
+    new_columns: list[str] = [f for f in changes["A"] if classify(f) == "column"]
+    new_editions: list[str] = [f for f in changes["A"] if classify(f) == "edition"]
+    new_assets: list[str] = [f for f in changes["A"] if classify(f) == "asset"]
+    mod_columns: list[str] = [f for f in changes["M"] if classify(f) == "column"]
+    mod_editions: list[str] = [f for f in changes["M"] if classify(f) == "edition"]
+    mod_assets: list[str] = [f for f in changes["M"] if classify(f) == "asset"]
+    moved: list[tuple[str, str]] = [f for f in changes["R"]]
 
-    volume_row   = f"| Volume | {volume} |" if volume else "| Volume | [fill in] |"
+    volume_row = f"| Volume | {volume} |" if volume else "| Volume | [fill in] |"
     pub_date_row = f"| Publish Date | {publish_date} |" if publish_date else "| Publish Date | [fill in] |"
 
     user_block = user_content if user_content is not None else """
@@ -347,7 +303,7 @@ def _register_sha(git_root: Path, sha: str, manifest_file: str) -> str:
                 """INSERT INTO edition_shas
                    (sha, commit_message, manifest_file, discovered_at, included_in)
                    VALUES (?, ?, ?, ?, NULL)""",
-                (sha, commit_message, manifest_file, datetime.now().strftime("%Y-%m-%d")),
+                (sha, commit_message, manifest_file, get_today()),
             )
             conn.commit()
             return "inserted"
@@ -371,34 +327,42 @@ def run(args: argparse.Namespace) -> None:
         if args.dry_run:
             if _verify_sha(args.register):
                 msg = _get_commit_message(args.register)
-                print(f"DRY RUN: would register SHA '{args.register}' — {msg}")
+                progress(f"DRY RUN: would register SHA '{args.register}' — {msg}")
             else:
-                print(f"DRY RUN: SHA '{args.register}' is invalid — nothing would be registered")
+                progress(
+                    f"DRY RUN: SHA '{args.register}' is invalid — "
+                    f"nothing would be registered"
+                )
             return
 
         status = _register_sha(git_root, args.register, "[manual registration]")
         messages = {
-            "inserted":           f"✓ Registered '{args.register}' — {_get_commit_message(args.register)}",
-            "already_registered": f"  '{args.register}' already in DB (not yet included in a changelog)",
-            "already_included":   f"  '{args.register}' already claimed by a changelog — skipping",
-            "invalid_sha":        f"✗ '{args.register}' is not a valid commit SHA in this repo",
-            "no_sha":             "  No SHA provided",
+            "inserted":
+                f"✓ Registered '{args.register}' — {_get_commit_message(args.register)}",
+            "already_registered":
+                f"  '{args.register}' already in DB (not yet included in a changelog)",
+            "already_included":
+                f"  '{args.register}' already claimed by a changelog — skipping",
+            "invalid_sha":
+                f"✗ '{args.register}' is not a valid commit SHA in this repo",
+            "no_sha":
+                "  No SHA provided",
         }
-        print(messages.get(status, status))
+        progress(messages.get(status, status))
         return
 
     # --- Manifest generation mode ---
     if not args.edition_dir:
-        print("❌  edition_dir is required when not using --register", file=sys.stderr)
+        error("edition_dir is required when not using --register")
         sys.exit(1)
 
     edition_path = Path(args.edition_dir).resolve()
 
     if not edition_path.exists():
-        print(f"Error: Edition directory not found: '{args.edition_dir}'", file=sys.stderr)
+        error(f"Edition directory not found: '{args.edition_dir}'")
         sys.exit(1)
     if not edition_path.is_dir():
-        print(f"Error: '{args.edition_dir}' is not a directory.", file=sys.stderr)
+        error(f"'{args.edition_dir}' is not a directory.")
         sys.exit(1)
 
     edition_name = edition_path.name
@@ -407,14 +371,18 @@ def run(args: argparse.Namespace) -> None:
     all_edition_files, column_files, edition_files, publish_date = _scan_edition_files(edition_path)
     num_columns = len(column_files)
     num_editions = len(edition_files)
-    classified   = set(column_files) | set(edition_files)
-    num_assets   = sum(1 for f in all_edition_files if f not in classified)
+    classified = set(column_files) | set(edition_files)
+    num_assets = sum(1 for f in all_edition_files if f not in classified)
 
     # Ensure edition files are staged before diffing
     if not args.dry_run:
         ensure_staged(edition_path, git_root)
 
-    changes = _get_git_changes(edition_path, args.commit_sha, git_root)
+    changes = get_git_changes(
+        commit_sha=args.commit_sha,
+        path=edition_path,
+        git_root=git_root,
+    )
     num_modified = len(changes["M"])
     num_added = len(changes["A"])
     num_archived = len(changes["D"])
@@ -428,13 +396,19 @@ def run(args: argparse.Namespace) -> None:
     output_path = parent_dir / f"{edition_name}-manifest.md"
 
     existing = find_todays_manifest(parent_dir, edition_name)
-    descriptions = {}
-    user_content = None
+    descriptions: dict[str, str | list[str]] = {}
+    user_content: str | None = None
+
     if existing:
-        existing_text = existing.read_text()
-        descriptions = extract_descriptions(existing_text)
-        user_content = extract_user_content(existing_text)
-        output_path = existing
+        existing_text = safe_read_markdown(existing)
+        if existing_text is None:
+            # Can't read the existing manifest — treat as if it doesn't exist
+            # and write fresh. safe_read_markdown already printed the reason.
+            existing = None
+        else:
+            descriptions = extract_descriptions(existing_text)
+            user_content = extract_user_content(existing_text)
+            output_path  = existing
 
     body = _build_manifest_body(
         edition_name, changes, args.commit_sha,
@@ -446,20 +420,28 @@ def run(args: argparse.Namespace) -> None:
     manifest_content = frontmatter + body
 
     if args.dry_run:
-        print("=== DRY RUN — no file written ===\n")
+        print_dry_run_header()
+        print()
         print(manifest_content)
         print(f"\n=== Would write to: {output_path} ===")
         print(f"  Resolved edition : {edition_path}")
         print(f"  Resolved git root: {git_root}")
     else:
-        output_path.write_text(manifest_content)
+        if not safe_write_markdown(output_path, manifest_content):
+            sys.exit(1)
         verb = "updated" if existing else "written"
         print(f"✓ Manifest {verb} to: {output_path}")
 
     print(f"  Edition  : {_edition_wikilink(edition_name)}")
     print(f"  Scoped   : {edition_path}")
-    print(f"  Articles : {num_columns} (class: column) + {num_editions} (class: edition) = {num_columns + num_editions} published")
-    print(f"  Assets   : {num_assets} assets ({len(all_edition_files)} total files in edition dir)")
+    print(
+        f"  Articles : {num_columns} (class: column) + {num_editions} (class: edition)"
+        f" = {num_columns + num_editions} published"
+    )
+    print(
+        f"  Assets   : {num_assets} assets "
+        f"({len(all_edition_files)} total files in edition dir)"
+    )
     print(f"  Changes  : {num_added} added, {num_modified} modified, {num_archived} archived")
     if args.volume:
         print(f"  Volume   : {args.volume}")

@@ -15,133 +15,38 @@ user content and descriptions in the existing changelog, if present.
 """
 
 import argparse
-import subprocess
-import sys
-from datetime import datetime
 from pathlib import Path
 
+from archivist.commands.changelog.changelog_base import ChangelogContext, run_changelog
 from archivist.utils import (
-    clean_filename,
-    detect_dir_renames,
-    ensure_staged,
-    extract_descriptions,
-    extract_user_content,
-    find_active_changelog,
-    get_repo_root,
-    prompt_out_of_scope_changes,
-    reassign_deletions,
-    rename_suspicion,
-    report_changes,
-    write_changelog,
+    format_file_list,
+    get_project_name,
+    get_today,
+    render_field,
 )
 
 
-# ---------------------------------------------------------------------------
-# Git helpers
-# ---------------------------------------------------------------------------
-
-def _get_git_changes(
-    commit_sha: str | None,
-    path: Path | None = None,
-    extra_paths: list[Path] | None = None,
-) -> dict:
-    # Build a multi-pathspec: primary scope + any always-include extras.
-    # extra_paths are only appended when a scope_path is active — with no
-    # scope, the diff must be unconstrained (full staged index).
-    all_paths = []
-    if path is not None:
-        all_paths.append(str(path))
-        for ep in (extra_paths or []):
-            if ep.exists():
-                all_paths.append(str(ep))
-    pathspec = (["--"] + all_paths) if all_paths else []
-
-    if commit_sha:
-        cmd = ["git", "-c", "core.quotepath=false", "diff-tree",
-               "--name-status", "-M", "-r", commit_sha] + pathspec
-    else:
-        cmd = ["git", "-c", "core.quotepath=false", "diff-index",
-               "--cached", "--name-status", "-M", "HEAD"] + pathspec
-
-    try:
-        output = subprocess.check_output(cmd, stderr=subprocess.PIPE, text=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Error running git command: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    changes = {"M": [], "A": [], "D": [], "R": []}
-    for line in output.strip().splitlines():
-        if not line:
-            continue
-        parts = line.split("\t")
-        status = parts[0].strip()[0]
-        if status == "R" and len(parts) == 3:
-            changes["R"].append((parts[1].strip(), parts[2].strip()))
-        elif status in changes:
-            changes[status].append(parts[-1].strip())
-
-    return changes
-
-
-def _always_include_paths(git_root: Path) -> list[Path]:
-    """
-    Paths that are always staged and included in the diff regardless of --path scope:
-    the .github/ directory and any README.md at the repo root.
-    Filtered to only existing paths before use.
-    """
+def _get_extra_paths(git_root: Path) -> list[Path]:
     return [
         git_root / ".github",
         git_root / "README.md",
     ]
 
 
-def _get_project_name(git_root: Path) -> str:
-    return git_root.name.lower().replace("'", "").replace(" ", "-")
-
-
-def _find_output_dir(git_root: Path) -> Path:
-    """
-    Locate and return the changelog output directory (ARCHIVE/).
-    Creates it if it does not yet exist.
-    """
-    output_dir = git_root / "ARCHIVE"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir
-
-
-# ---------------------------------------------------------------------------
-# Template
-# ---------------------------------------------------------------------------
-
-def _build_frontmatter(
-    commit_sha: str | None,
-    num_modified: int,
-    num_added: int,
-    num_archived: int,
-    git_root: Path,
-) -> str:
-    today = datetime.now().strftime("%Y-%m-%d")
-    project_name = _get_project_name(git_root)
-
+def _build_frontmatter(ctx: ChangelogContext) -> str:
+    today = get_today()
     auto = {
-        "class":          "archive",
-        "category":       ["changelog"],
-        "log-scope":      "general",
-        "modified":       today,
-        "commit-sha":     commit_sha or "",
-        "files-modified": num_modified,
-        "files-created":  num_added,
-        "files-archived": num_archived,
-        "tags":           [project_name],
+        "class": "archive",
+        "category": ["changelog"],
+        "log-scope": "general",
+        "modified": today,
+        "UUID": ctx.changelog_uuid,
+        "commit-sha": ctx.args.commit_sha or "",
+        "files-modified": len(ctx.modified),
+        "files-created": len(ctx.changes["A"]),
+        "files-archived": len(ctx.true_deleted),
+        "tags": [get_project_name(ctx.git_root)],
     }
-
-    def render_field(key, value):
-        if isinstance(value, list):
-            if not value:
-                return [f"{key}: []"]
-            return [f"{key}:"] + [f"  - {item}" for item in value]
-        return [f"{key}: {value}"]
-
     lines = ["---"]
     for key, value in auto.items():
         lines.extend(render_field(key, value))
@@ -149,45 +54,9 @@ def _build_frontmatter(
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Body builder
-# ---------------------------------------------------------------------------
-
-def _build_body(
-    changes: dict,
-    true_deleted: list[str],
-    renames: dict[str, str],
-    modified: list[str],
-    commit_sha: str | None,
-    descriptions: dict,
-    user_content: str | None,
-) -> str:
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    def file_list(files, fallback, active_renames=None):
-        if active_renames is None:
-            active_renames = {}
-        if not files:
-            return f"- {fallback}\n"
-        lines = []
-        for f in files:
-            desc = descriptions.get(f, "[description]")
-            old = active_renames.get(f)
-            rename_str = (
-                f" *(renamed from `{clean_filename(old)}`)*" + rename_suspicion(old, f)
-                if old else ""
-            )
-            if isinstance(desc, list):
-                lines.append(f"- `{f}`{rename_str}:")
-                for item in desc:
-                    lines.append(f"  - {item}")
-                lines.append("")
-            else:
-                lines.append(f"- `{f}`{rename_str}: {desc}")
-        return "\n".join(lines) + "\n"
-
-    user_block = user_content if user_content is not None else """
-
+def _build_body(ctx: ChangelogContext) -> str:
+    today = get_today()
+    user_block = ctx.user_content if ctx.user_content is not None else """
 ## Notes
 
 
@@ -207,97 +76,28 @@ def _build_body(
 | Field | Value |
 |-------|-------|
 | Date | {today} |
-| Commit SHA | {commit_sha or "[fill in after commit]"} |
-| Files Added | {len(changes["A"])} |
-| Files Modified | {len(modified)} |
-| Files Archived | {len(true_deleted)} |
+| Commit SHA | {ctx.args.commit_sha or "[fill in after commit]"} |
+| Files Added | {len(ctx.changes["A"])} |
+| Files Modified | {len(ctx.modified)} |
+| Files Archived | {len(ctx.true_deleted)} |
 
 ## Changes
 
 ### Files Modified
-{file_list(modified, "No files modified", renames)}
+{format_file_list(ctx.modified, "No files modified", ctx.descriptions, ctx.renames)}
 ### New Files Created
-{file_list(changes["A"], "No new files")}
+{format_file_list(ctx.changes["A"], "No new files", ctx.descriptions)}
 ### Files Removed / Archived
-{file_list(true_deleted, "No files archived")}
+{format_file_list(ctx.true_deleted, "No files archived", ctx.descriptions)}
 
 <!-- archivist:auto-end -->{user_block}"""
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
 def run(args: argparse.Namespace) -> None:
-    git_root = get_repo_root()
-    print(f"  📁 Repo root : {git_root}")
-
-    output_dir = _find_output_dir(git_root)
-    print(f"  📁 Output dir: {output_dir}")
-
-    # Resolve --path if provided
-    scope_path = Path(args.path).resolve() if getattr(args, "path", None) else None
-
-    # Always include .github/ and README.md in staging and diff
-    always_paths = _always_include_paths(git_root)
-
-    # Ensure files are staged
-    if not args.dry_run:
-        ensure_staged(scope_path, git_root, extra_paths=always_paths)
-
-        # If a scope was given, prompt for any unstaged changes outside it
-        if scope_path is not None:
-            prompt_out_of_scope_changes(scope_path, git_root)
-
-    changes = _get_git_changes(args.commit_sha, scope_path, extra_paths=always_paths)
-
-    dir_renames = detect_dir_renames(changes["R"])
-    true_deleted, dir_renamed_files = reassign_deletions(changes["D"], dir_renames)
-    all_renames = changes["R"] + dir_renamed_files
-    renames = {new: old for old, new in all_renames}
-    modified = changes["M"] + list(renames.keys())
-
-    report_changes(changes, modified, true_deleted)
-
-    today = datetime.now().strftime("%Y-%m-%d")
-    output_path = output_dir / f"CHANGELOG-{today}.md"
-
-    # Check for an existing changelog and preserve user content
-    existing = find_active_changelog(output_dir)
-    descriptions = {}
-    user_content = None
-    if existing:
-        print(f"  🔍 Found existing changelog: {existing.name} — updating in place")
-        existing_text = existing.read_text()
-        descriptions = extract_descriptions(existing_text)
-        user_content = extract_user_content(existing_text)
-        output_path = existing
-    else:
-        print(f"  🆕 No existing changelog found — creating {output_path.name}")
-
-    frontmatter = _build_frontmatter(
-        args.commit_sha,
-        num_modified=len(modified),
-        num_added=len(changes["A"]),
-        num_archived=len(true_deleted),
-        git_root=git_root,
+    run_changelog(
+        args,
+        module_type="general",
+        build_frontmatter=_build_frontmatter,
+        build_body=_build_body,
+        get_extra_paths=_get_extra_paths,
     )
-    body = _build_body(
-        changes, true_deleted, renames, modified,
-        args.commit_sha, descriptions, user_content,
-    )
-    changelog_content = frontmatter + body
-
-    if args.dry_run:
-        print("=== DRY RUN — no file written ===\n")
-        print(changelog_content)
-        print(f"\n=== Would write to: {output_path} ===")
-    else:
-        write_changelog(output_path, changelog_content, existing=bool(existing))
-
-    print(f"  Project  : {_get_project_name(git_root)}")
-    print(f"  Changes  : {len(changes['A'])} added, {len(modified)} modified, {len(true_deleted)} archived")
-    if args.commit_sha:
-        print(f"  SHA      : {args.commit_sha}")
-    else:
-        print("  SHA      : (staged changes — run after your commit to lock it in)")

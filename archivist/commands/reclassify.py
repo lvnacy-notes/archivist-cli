@@ -12,11 +12,25 @@ only the `class:` line is touched, nothing else in the frontmatter moves.
 Matching is case-insensitive. The --to value is written exactly as given.
 """
 
+from __future__ import annotations
+
+import argparse
 import re
 import sys
 from pathlib import Path
 
-from archivist.utils import get_file_frontmatter, get_repo_root
+from archivist.utils import (
+    error,
+    find_markdown_files,
+    get_file_frontmatter,
+    get_repo_root,
+    matches_class_filter,
+    print_dry_run_header,
+    progress,
+    safe_read_markdown,
+    safe_write_markdown,
+    warning,
+)
 
 # Matches the class: line within a frontmatter block.
 # Handles bare, single-quoted, and double-quoted scalar values.
@@ -59,7 +73,7 @@ def _rewrite_class(content: str, old_val: str, new_val: str) -> str | None:
     return None
 
 
-def run(args) -> None:
+def run(args: argparse.Namespace) -> None:
     git_root = get_repo_root()
 
     search_root = (
@@ -70,27 +84,27 @@ def run(args) -> None:
     new_val = args.to_class.strip()
 
     if old_val.lower() == new_val.lower():
-        print("❌  --from and --to resolve to the same value. Nothing to do.")
+        error("--from and --to resolve to the same value. Nothing to do.")
         sys.exit(1)
 
     # --- Find matching files via frontmatter parse ---
     matched: list[Path] = []
-    for filepath in sorted(search_root.rglob("*.md")):
-        fm = get_file_frontmatter(filepath)
+    for filepath in find_markdown_files(search_root):
+        fm: dict[str, str | list[str]] | None = get_file_frontmatter(filepath)
         if fm is None:
             continue
-        val = fm.get("class")
-        if val is not None and str(val).strip().lower() == old_val.lower():
+        if matches_class_filter(fm, old_val):
             matched.append(filepath)
 
     if not matched:
-        print(f"  No files found with class: {old_val}")
+        progress(f"  No files found with class: {old_val}")
         return
 
     # --- Dry run ---
     if args.dry_run:
-        print("=== DRY RUN — no files written ===\n")
-        print(
+        print_dry_run_header()
+        print()
+        progress(
             f"  Would reclassify {len(matched)} file(s): "
             f"class: {old_val}  →  class: {new_val}\n"
         )
@@ -99,7 +113,7 @@ def run(args) -> None:
                 rel = f.relative_to(git_root)
             except ValueError:
                 rel = f
-            print(f"  · {rel}")
+            progress(f"  · {rel}")
         return
 
     # --- Live run ---
@@ -111,34 +125,26 @@ def run(args) -> None:
         except ValueError:
             rel = filepath
 
-        try:
-            content = filepath.read_text(encoding="utf-8", errors="ignore")
-        except OSError as e:
-            print(f"  ⚠️  Could not read {rel}: {e}", file=sys.stderr)
+        content = safe_read_markdown(filepath)
+        if content is None:
             failed += 1
             continue
 
         new_content = _rewrite_class(content, old_val, new_val)
         if new_content is None:
-            print(
-                f"  ⚠️  Could not locate class: line in frontmatter — skipping {rel}",
-                file=sys.stderr,
-            )
+            warning(f"Could not locate class: line in frontmatter — skipping {rel}")
             failed += 1
             continue
 
-        try:
-            filepath.write_text(new_content, encoding="utf-8")
-        except OSError as e:
-            print(f"  ⚠️  Could not write {rel}: {e}", file=sys.stderr)
+        if not safe_write_markdown(filepath, new_content):
             failed += 1
             continue
 
-        print(f"  ✓ {rel}")
+        progress(f"  ✓ {rel}")
         updated += 1
 
-    print(
+    progress(
         f"\n  Reclassified {updated} file(s):  class: {old_val}  →  class: {new_val}"
     )
     if failed:
-        print(f"  ⚠️  {failed} file(s) skipped — see warnings above")
+        warning(f"{failed} file(s) skipped — see warnings above")

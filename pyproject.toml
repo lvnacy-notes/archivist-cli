@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "archivist"
-version = "1.4.0"
+version = "2.0.0"
 description = "CLI tool for managing Obsidian vault frontmatter and archive workflows"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,6 +15,14 @@ dependencies = [
 [project.scripts]
 archivist = "archivist.cli:main"
 
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: requires git on PATH and real filesystem ops"]
+pythonpath = ["."]
+
 [tool.setuptools.packages]
 find = {}
 
@@ -23,3 +31,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[tool.pyright]
+ignore = ["tests"]
+reportUndefinedVariable = "error"
