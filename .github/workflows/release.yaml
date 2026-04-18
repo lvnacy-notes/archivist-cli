@@ -129,7 +129,7 @@ jobs:
           python -m build
 
       - name: Publish to PyPI — because apparently we're doing this
-        if: steps.tag_exists.outputs.exists == 'false' && env.PUBLISH_TO_PYPI == 'true' && secrets.PYPI_API_TOKEN != ''
+        if: steps.tag_exists.outputs.exists == 'false' && env.PUBLISH_TO_PYPI == 'true'
         uses: lvnacy-actions/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
