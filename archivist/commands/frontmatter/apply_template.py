@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import cast
 
 from archivist.utils import (
     FRONTMATTER_RE,
@@ -58,6 +59,8 @@ def _load_note(
         return None
 
     match = FRONTMATTER_RE.match(content)
+    if not match:
+        return None
     return parse_frontmatter_entries(match.group(1)), content[match.end():]
 
 
@@ -73,10 +76,10 @@ def _note_matches_class(
     """Check whether the note satisfies the class filter."""
     if class_prop == "class":
         # Reconstruct a minimal fm dict and use the canonical helper.
-        fm = {
-            key: (lines[0].split(":", 1)[1].strip() if ":" in lines[0] else None)
-            for key, lines in entries
-        }
+        fm = {}
+        for key, lines in entries:
+                value = lines[0].split(":", 1)[1].strip() if ":" in lines[0] else ""
+                fm[key] = value
         return matches_class_filter(fm, class_value)
     # Non-standard class property — exact string match.
     for key, lines in entries:

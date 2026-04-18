@@ -55,6 +55,9 @@ def _process_note(
 
     if has_frontmatter(content):
         match = FRONTMATTER_RE.match(content)
+        if not match:
+            return False
+
         raw_fm = match.group(1)
         body = content[match.end():]
 

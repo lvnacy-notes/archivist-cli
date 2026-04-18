@@ -16,6 +16,9 @@
 
 name: Run the Damn Tests
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -95,3 +98,20 @@ jobs:
       - name: Run integration tests — slow, honest, and deeply suspicious of your code
         run: |
           pytest -m integration -v --tb=short
+
+  # ---------------------------------------------------------------------------
+  # Status gate — GitHub better fucking recognize and enforce this
+  # ---------------------------------------------------------------------------
+  tests-passed:
+    name: Fucking Tests Status
+    runs-on: ubuntu-latest
+    if: always()  # Run even if previous jobs fail (so we can report failure)
+    needs: [unit-tests, integration-tests]
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.unit-tests.result }}" != "success" ] || [ "${{ needs.integration-tests.result }}" != "success" ]; then
+            echo "❌ Tests failed. Fix your shit."
+            exit 1
+          fi
+          echo "✅ All tests passed. You're good."

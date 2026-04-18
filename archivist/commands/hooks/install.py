@@ -20,7 +20,7 @@ from pathlib import Path
 # Hook script templates
 # ---------------------------------------------------------------------------
 
-PRE_COMMIT_HOOK = """\
+PRE_COMMIT_HOOK = r"""\
 #!/usr/bin/env bash
 # archivist pre-commit hook
 # Checks for a staged manifest or changelog; prompts to generate one if absent.
@@ -47,7 +47,7 @@ if git diff --cached --name-only | grep -qE '.*-manifest\.md$'; then
 fi
 
 # Only an UNSEALED changelog satisfies this check. Sealed changelogs carry a
-# short SHA suffix (CHANGELOG-YYYY-MM-DD-{sha}.md) because they are closed
+# short SHA suffix (CHANGELOG-YYYY-MM-DD-{ sha }.md) because they are closed
 # records that document a past commit. They have nothing to do with the
 # changes currently staged. If only a sealed changelog is in the diff, the
 # hook correctly falls through to the prompt — that is intentional behaviour,
@@ -112,7 +112,7 @@ esac
 exit 0
 """
 
-POST_COMMIT_HOOK = """\
+POST_COMMIT_HOOK = r"""\
 #!/bin/sh
 #
 # archivist post-commit hook
