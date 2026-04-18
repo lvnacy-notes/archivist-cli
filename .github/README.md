@@ -56,11 +56,26 @@ module-type: story  # story | publication | library | vault | general
 
 This file tells Archivist what kind of project it is dealing with, which drives changelog routing and git hook behavior. Projects without a `.archivist` file are ignored by the hooks entirely — Archivist never touches repos it has not been asked to manage.
 
+Additional optional fields:
+
+```yaml
+# For library modules — where archivist scans for catalogued works
+works-dir: works
+
+# Override the default changelog output directory (relative to repo root)
+# Defaults: story/publication → ARCHIVE/CHANGELOG/, everything else → ARCHIVE/
+changelog-output-dir: ARCHIVE/LOGS
+
+# Set automatically by archivist init — do not edit by hand
+templater: true
+```
+
 ### `ARCHIVE/` directory
 
-Each Apparatus module maintains an `ARCHIVE/` directory at its root. Archivist writes all generated changelogs directly into this directory. For publication modules, `ARCHIVE/` also serves as the search root for `MANIFEST_TEMPLATE.md` — the template that drives edition manifest output.
+Each Apparatus module maintains an `ARCHIVE/` directory at its root. Archivist writes all generated changelogs directly into this directory (or `ARCHIVE/CHANGELOG/` for story and publication modules by default). For publication modules, `ARCHIVE/` also serves as the search root for `MANIFEST_TEMPLATE.md` — the template that drives edition manifest output.
 
 - `MANIFEST_TEMPLATE.md` — drives edition manifest output (publication modules only)
+- `archive.db` — SQLite database shared by `manifest` and `changelog publication`
 
 Field order in generated manifests is determined entirely by the template. To add, remove, or reorder a field, edit the template — no code changes required. Changelog frontmatter fields are defined in each subcommand module directly.
 
@@ -69,7 +84,7 @@ Field order in generated manifests is determined entirely by the template. To ad
 Archivist installs two git hooks:
 
 - **`pre-commit`** — checks whether a manifest or changelog is staged. If not, prompts you to generate one before the commit proceeds.
-- **`post-commit`** — always prints commit details (SHA, message, branch). In Archivist-managed repos, also backfills the commit SHA into any manifest or changelog that was included in the commit.
+- **`post-commit`** — always prints commit details (SHA, message, branch). In Archivist-managed repos, also backfills the commit SHA into any manifest included in the commit, and delegates changelog sealing to `archivist changelog seal`.
 
 Hooks are installed globally into `~/.git-templates/hooks/` and copied automatically into new clones. Existing repos can be synced with `archivist hooks sync`.
 
@@ -131,8 +146,11 @@ If no `.archivist` config is found, it walks you through setup:
 
 1. **Is this an Apparatus project?** Yes / No
 2. If yes: select a module type from the available list
-3. Writes `.archivist` to the repo root
-4. Installs git hooks locally
+3. For `library` modules: set the `works-dir` path (where Archivist scans for catalogued works)
+4. Optionally set a custom `changelog-output-dir` to override the default output location
+5. Automatically detects whether the Obsidian Templater plugin is installed and sets `templater: true/false` accordingly — in a future update, this will allow Archivist to resolve Templater expressions
+6. Writes `.archivist` to the repo root
+7. Installs git hooks locally
 
 If `.archivist` already exists, it displays the current config and offers to update it or reinstall hooks.
 
@@ -221,25 +239,56 @@ archivist frontmatter rename -p tags -n keywords --dry-run
 
 #### `archivist frontmatter apply-template`
 
-Applies a frontmatter template to all notes whose `class` property matches a specified value. For each matching note:
+Applies a frontmatter template to all notes matching a set of filter criteria. For each matching note:
 
 - Adds properties present in the template but missing from the note (using template defaults)
 - Removes properties present in the note but absent from the template
 - Reorders properties to match the template order
 - Preserves existing values for retained properties
 
+**The template is the authority. The template is the law.**
+
+Filter by any combination of `--class`, `--path`, and `--tag`. All provided filters must match (AND logic). At least one filter is required — Archivist will not rewrite your entire vault on a hunch.
+
 ```bash
 archivist frontmatter apply-template -t templates/character.md -c character
+archivist frontmatter apply-template -t templates/article.md --tag draft
 archivist frontmatter apply-template -t templates/location.md -c location --class-property type
-archivist frontmatter apply-template -t templates/character.md -c character --dry-run
+archivist frontmatter apply-template -t templates/character.md -c character --path content/characters
+archivist frontmatter apply-template -t templates/character.md -c character --tag hero --dry-run
 ```
 
 | Flag | Short | Required | Description |
 |---|---|---|---|
 | `--template` | `-t` | ✅ | Path to the template markdown file |
-| `--class` | `-c` | ✅ | Class value to match (e.g. `character`, `location`) |
-| `--class-property` | | ❌ | Frontmatter property used to identify the class (default: `class`) |
+| `--class` | `-c` | ❌ | Class value to match (e.g. `character`, `location`) |
+| `--class-property` | | ❌ | Frontmatter property used as the class discriminator (default: `class`) |
+| `--path` | | ❌ | Limit search to this directory (relative to repo root) |
+| `--tag` | | ❌ | Match notes that carry this tag in their frontmatter |
 | `--dry-run` | | ❌ | Preview without writing to disk |
+
+At least one of `--class`, `--path`, or `--tag` is required.
+
+---
+
+### `archivist reclassify`
+
+Find every `.md` file whose frontmatter `class` field matches a given value and rewrite it to a new value. Surgical — only the `class:` line is touched. Nothing else in the frontmatter moves.
+
+Matching is case-insensitive. The `--to` value is written verbatim. Scope with `--path` to limit the search.
+
+```bash
+archivist reclassify --from article --to column
+archivist reclassify --from article --to column --path content/
+archivist reclassify --from article --to column --dry-run
+```
+
+| Flag | Required | Description |
+|---|---|---|
+| `--from` | ✅ | Current class value to match (case-insensitive) |
+| `--to` | ✅ | New class value to write |
+| `--path` | ❌ | Limit search to this file or directory |
+| `--dry-run` | ❌ | Preview changes without writing to disk |
 
 ---
 
@@ -253,7 +302,13 @@ Frontmatter structure is driven entirely by `MANIFEST_TEMPLATE.md`, searched rec
 
 #### Manifest generation
 
-Scopes all git diff tracking to the edition directory only — staging the entire project is safe. Classifies each changed file by reading its `class` frontmatter property directly, sorting articles, edition files, and assets into the correct sections. Renames detected by `git mv` appear as `old → new` in a dedicated Moved section.
+Scopes all git diff tracking to the edition directory only — staging the entire project is safe. Classifies each changed file by reading its `class` frontmatter property directly, sorting columns, edition files, and assets into the correct sections:
+
+- `class: column` — editorial columns and articles
+- `class: edition` — the edition's primary file (drives `publish-date` extraction)
+- Everything else — assets and supporting files
+
+Renames detected by `git mv` appear as `old → new` in a dedicated Moved section.
 
 If the edition's files are not yet staged, Archivist stages them automatically before diffing.
 
@@ -263,8 +318,8 @@ Auto-populated frontmatter fields:
 
 | Field | Source |
 |---|---|
-| `articles-published` | Count of `class: article` + `class: edition` files |
-| `assets-included` | Count of files in the edition directory that are not classified as articles or edition files |
+| `columns-published` | Count of `class: column` + `class: edition` files |
+| `assets-included` | Count of files in the edition directory not classified as columns or edition files |
 | `files-created` / `files-modified` / `files-archived` | Scoped git diff counts |
 | `edition` | Quoted wikilink from directory name — `VOL-II-NO-27` → `"[[VOL II NO 27]]"` |
 | `publish-date` | Pulled from the `class: edition` file's frontmatter if present |
@@ -313,11 +368,11 @@ Reports one of four outcomes: `inserted`, `already registered`, `already claimed
 
 ### `archivist changelog`
 
-Generates a `CHANGELOG-{date}.md` capturing project changes. Output is written to `ARCHIVE/`. Frontmatter fields are defined per subcommand — no template file required.
+Generates a `CHANGELOG-{date}.md` capturing project changes. Output is written to `ARCHIVE/` or `ARCHIVE/CHANGELOG/` depending on module type (or your `changelog-output-dir` config). Frontmatter fields are defined per subcommand — no template file required.
 
 #### Auto-routing
 
-Running `archivist changelog` bare — no subcommand — reads `module-type` from `.archivist` and dispatches to the appropriate subcommand automatically. You ran `archivist init`, you set a module type, and now you don't have to think about it again.
+Running `archivist changelog` bare — no subcommand — reads `module-type` from `.archivist` and dispatches to the appropriate subcommand automatically.
 
 | `.archivist` module-type | Runs |
 |---|---|
@@ -329,11 +384,11 @@ Running `archivist changelog` bare — no subcommand — reads `module-type` fro
 
 No `.archivist` config, or an unrecognized module type? Falls back to `general`. It'll manage.
 
-`--dry-run`, `commit-sha`, and `--path` are all accepted by the bare invocation and passed through to whichever subcommand gets invoked:
+`--dry-run`, `--commit-sha`, and `--path` are all accepted by the bare invocation and passed through to whichever subcommand gets invoked:
 
 ```bash
 archivist changelog --dry-run
-archivist changelog a1b2c3d
+archivist changelog --commit-sha a1b2c3d
 archivist changelog --path ./chapters
 ```
 
@@ -354,11 +409,19 @@ Re-running a changelog command pre-commit updates the existing file rather than 
 
 The auto-generated block above the sentinel is always fully regenerated from the current staged state, so file counts, SHA, and the file list stay accurate no matter how many times you re-run.
 
+#### `--path` scoping and the nag prompts
+
+When `--path` is active, Archivist stages and diffs only the specified directory. Two interactive prompts exist to keep you from shooting yourself in the foot:
+
+**Out-of-scope prompt** (Step 3): If there are unstaged changes — modified tracked files or untracked files — sitting outside your scope, Archivist lists them and asks if you want to stage them too. Say `y` and they get staged. Say `n` and they're left alone. Either way, the run continues.
+
+**Save-before-overwrite prompt** (Step 6): If an existing changelog has working-tree edits that haven't been staged yet, Archivist warns you before overwriting it. Say `y` and it stages the file first. Say `n` and the rerun proceeds at your own risk. Both prompts are completely suppressed during `--dry-run`.
+
 ```bash
 # Auto-routes based on .archivist
 archivist changelog
 archivist changelog --dry-run
-archivist changelog a1b2c3d
+archivist changelog --commit-sha a1b2c3d
 
 # Explicit subcommands — always available, always route directly
 archivist changelog general
@@ -382,17 +445,49 @@ archivist changelog general a1b2c3d
 | `--path` | ❌ | File or directory to stage and scope the diff to |
 | `--dry-run` | ❌ | Print to stdout without writing to disk or DB |
 
+#### Rename detection
+
+Archivist runs a three-pass rename detection pipeline on every changelog run, recovering renames that git's similarity threshold missed:
+
+1. **Pass 0 (git):** `git diff -M` — renames git detected natively (>50% content similarity, any directory).
+2. **Pass 1 (filename):** Pairs unmatched deleted/added files by identical filename across directories. Ambiguous matches (same filename added in two places) are left alone.
+3. **Pass 2 (content):** Compares file content against HEAD for remaining unmatched pairs using sequence similarity. Catches the worst case: file renamed AND moved simultaneously.
+
+Same-directory renames are annotated as `renamed from old-name.md`. Cross-directory moves are annotated as `moved from old/path/file.md` — because "`renamed from note.md`" is a useless hint when there are forty files called `note.md` in the vault. Suspicious renames (unrelated stems, or crossing directories) get a ⚠️ flag in the output so you can verify before committing.
+
 ---
 
 #### `archivist changelog general`
 
-A clean, minimal changelog with no project-type-specific sections. Suitable for any project. Also invoked by bare `archivist changelog`.
+A clean, minimal changelog with no project-type-specific sections. Suitable for any project. Also invoked by bare `archivist changelog` when no `.archivist` config is present.
+
+Output goes to `ARCHIVE/`.
 
 ---
 
 #### `archivist changelog library`
 
-For library modules. Tracks works catalogued, authors, publications, and definitions in symmetry.
+For library modules. Reads frontmatter from every changed `.md` file and routes it into named class buckets:
+
+- **Works** — files carrying a `work-stage` field (regardless of `class` value), bucketed by current stage
+- **Author Cards** — `class: author` files
+- **Publication Cards** — `class: collection` files
+- **Definitions** — `class: entry` files (word + aliases surfaced)
+- **Other File Changes** — everything that didn't claim a named bucket
+
+Auto-populated frontmatter counters: `works-added`, `works-updated`, `works-removed`, `authors-added`, `authors-updated`, `publications-added`, `definitions-added`.
+
+**Catalog Snapshot** — the crown jewel of the library changelog. Generated at run time from the full works directory and frozen as static Mermaid charts:
+
+- **Stage Distribution** — pie chart of work counts per `work-stage` across the entire catalog
+- **Throughput** — table of `work-stage` transitions detected in this commit (e.g., `raw` → `active`)
+- **Author Landscape** — pie chart of work counts per author (top 8, rest bucketed as "Others")
+- **Reading Velocity** — bar chart of `date-consumed` entries over the rolling 12 months
+- **Placeholder Debt** — count of works stuck at `placeholder` with no `date-consumed`
+
+The works directory defaults to `works/` and is configurable via `works-dir` in `.archivist`.
+
+Output goes to `ARCHIVE/`.
 
 ---
 
@@ -400,13 +495,17 @@ For library modules. Tracks works catalogued, authors, publications, and definit
 
 For newsletter and publication modules. Queries the archive DB for edition commit SHAs not yet recorded in any changelog, includes them in `editions-sha` frontmatter, and marks them as claimed in a single transaction — each SHA appears in exactly one changelog, never duplicated, never silently dropped.
 
+**The UUID lifecycle:** When a publication changelog is first generated, it receives a UUID written into its `UUID` frontmatter field. Edition SHAs are claimed against this UUID (`included_in = UUID`) rather than a file path — stable across renames and post-commit hook renaming. At seal time, `archivist changelog seal` transitions `included_in` from UUID to the commit SHA, completing the handoff. Iterative re-runs before sealing correctly re-surface SHAs already claimed by the current changelog's UUID.
+
 Auto-populated frontmatter fields:
 
 | Field | Source |
 |---|---|
-| `editions-sha` | SHAs from the archive DB with `included_in = NULL` |
+| `editions-sha` | SHAs from the archive DB with `included_in = NULL` or `included_in = current UUID` |
 | `files-created` / `files-modified` / `files-archived` | Repo-wide git diff counts |
-| `class`, `category`, `log-scope`, `modified`, `commit-sha`, `tags` | Auto-set |
+| `class`, `category`, `log-scope`, `modified`, `UUID`, `commit-sha`, `tags` | Auto-set |
+
+Output goes to `ARCHIVE/CHANGELOG/`.
 
 **Archive DB:** `ARCHIVE/archive.db` — shared with `archivist manifest`.
 
@@ -416,16 +515,52 @@ Auto-populated frontmatter fields:
 
 For story and creative writing modules. Includes writing-specific sections: scene development, character arcs, plot advancement, creative considerations, and next steps structured around narrative milestones.
 
+Output goes to `ARCHIVE/CHANGELOG/`.
+
 ---
 
 #### `archivist changelog vault`
 
-For vault-level commits. In addition to standard file change tracking, captures:
+For vault-level commits. In addition to standard file change tracking (with routing by `template`, `scaffold`, `script`, and `.archivist` keywords into named sections), captures:
 
-- Which submodules were updated in this commit
-- A status table of all registered submodules: current SHA, uncommitted changes, unpushed commits
+- **Updated in This Commit** — which submodule paths were touched in the staged changes or given commit
+- **Status Overview** — a full status table for all registered submodules: current short SHA, whether uncommitted changes exist, whether there are unpushed commits
 
-Useful for tracking the state of the full Apparatus ecosystem at commit time.
+```
+| Module | SHA | Uncommitted | Unpushed |
+|--------|-----|-------------|----------|
+| `stories/my-story` | a1b2c3d | clean | pushed |
+| `publications/the-bsp` | deadbee | ⚠️ yes | ⚠️ yes |
+```
+
+Useful for knowing exactly where everything stands before it matters.
+
+Output goes to `ARCHIVE/`.
+
+---
+
+#### `archivist changelog seal`
+
+Backfills a commit SHA into any unsealed changelogs included in the given commit, renames them to mark them as sealed, and updates the archive DB where a `UUID` is present in frontmatter.
+
+Called automatically by the post-commit hook. You shouldn't need to run this by hand — but if the hook misfired, a seal got missed, or you're just that kind of person, here it is.
+
+What "sealed" means in practice:
+
+- **Frontmatter:** `commit-sha:` is backfilled with the short SHA.
+- **Body table:** The `| Commit SHA | [fill in after commit] |` placeholder is replaced with the full SHA.
+- **Filename:** The changelog is renamed from `CHANGELOG-YYYY-MM-DD.md` to `CHANGELOG-YYYY-MM-DD-{short_sha}.md`. This is the lock — sealed files are excluded from `find_active_changelog()` and will never be picked up as an existing changelog on future runs.
+- **Archive DB:** If the changelog has a `UUID` in frontmatter, the `changelogs` table is upserted with the commit SHA and seal timestamp, and `edition_shas.included_in` transitions from UUID to short SHA for all claimed edition SHAs.
+
+A commit with no unsealed changelogs exits cleanly. Running seal twice against the same commit is idempotent — the second pass sees the unsealed filename is gone from disk, warns, and exits without touching the sealed file.
+
+```bash
+archivist changelog seal abc123def456...
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `commit-sha` | ✅ | Full commit SHA to seal against |
 
 ---
 
@@ -444,7 +579,7 @@ archivist hooks install --dry-run
 
 #### `archivist hooks sync`
 
-Copies hooks directly into the current repo's `.git/hooks/`. Use this for repos that existed before `hooks install` was run.
+Copies hooks directly into the current repo's `.git/hooks/`. Use this for repos that existed before `hooks install` was run. Detects submodules and offers to sync into each one as well.
 
 ```bash
 archivist hooks sync
@@ -453,7 +588,7 @@ archivist hooks sync --dry-run
 
 #### Hook behavior
 
-**`pre-commit`:** Checks whether a manifest or changelog is staged. If none is found, prompts:
+**`pre-commit`:** Checks whether a manifest or changelog is staged. Only unsealed changelogs count — sealed files (carrying a SHA suffix) are explicitly excluded, because they're closed records from a past commit and have nothing to do with what you're staging right now. If nothing is found, prompts:
 
 ```
 📋 archivist: No manifest or changelog found in staged files.
@@ -462,9 +597,11 @@ Generate one now?
   1. no — proceed with commit as-is
   2. manifest — generate an edition manifest
   3. changelog — generate a changelog
+  4. stage existing — add an existing file to staging
+  5. cancel — abort the commit
 ```
 
-Selecting `manifest` prompts for an edition directory path, runs `archivist manifest`, and stages the result. Selecting `changelog` runs the appropriate changelog command for the module type and stages the result.
+Selecting `manifest` prompts for an edition directory path, runs `archivist manifest`, and stages the result. Selecting `changelog` runs the appropriate changelog command for the module type and stages the result. Selecting `stage existing` prompts for a file path and stages it directly.
 
 **`post-commit`:** Runs in every repo — Archivist-managed or not — and prints commit details:
 
@@ -481,28 +618,46 @@ Selecting `manifest` prompts for an edition directory path, runs `archivist mani
    "Create PR from main to main"
 ```
 
-In Archivist-managed repos, it additionally backfills the commit SHA into any manifest or changelog included in the commit that has an empty `commit-sha` frontmatter field:
+In Archivist-managed repos, it additionally:
+1. Backfills the commit SHA into any **manifests** included in the commit that have an empty `commit-sha` frontmatter field (bash-native, runs unconditionally).
+2. Delegates changelog sealing to `archivist changelog seal <full-sha>` — which handles backfill, rename, and DB update for changelogs atomically from Python.
 
-- Short SHA → `commit-sha:` in frontmatter
-- Full SHA → `Commit SHA` row in the body table
-
-The updated file is left unstaged — commit it deliberately, typically alongside the next edition or changelog.
+The updated files are left unstaged — commit them deliberately, typically alongside the next edition or changelog.
 
 ---
 
 ## Archive DB
 
-`archivist manifest` and `archivist changelog publication` share a SQLite database at `ARCHIVE/archive.db`, created automatically on first use. It tracks edition commit SHAs from registration through inclusion in a project changelog.
+`archivist manifest` and `archivist changelog publication` share a SQLite database at `ARCHIVE/archive.db`, created automatically on first use.
 
 ```sql
+-- Tracks edition commit SHAs from registration through changelog inclusion
 CREATE TABLE edition_shas (
     sha             TEXT PRIMARY KEY,
     commit_message  TEXT,
     manifest_file   TEXT,
     discovered_at   TEXT,
-    included_in     TEXT   -- NULL until claimed by a changelog
+    included_in     TEXT   -- NULL until claimed; holds UUID until sealed, then short_sha
+);
+
+-- Registry of all generated changelogs, keyed by UUID. Populated at seal time.
+CREATE TABLE changelogs (
+    uuid        TEXT PRIMARY KEY,
+    commit_sha  TEXT,
+    log_scope   TEXT,
+    created_at  TEXT,
+    sealed_at   TEXT,
+    file_path   TEXT
 );
 ```
+
+The `included_in` lifecycle for `edition_shas`:
+
+1. **`NULL`** — registered by `archivist manifest --register`, not yet in any changelog
+2. **UUID** — claimed by `archivist changelog publication` on first (or any iterative) run
+3. **Short SHA** — transitioned by `archivist changelog seal` at commit time
+
+This chain is what makes iterative publication changelog re-runs correct (UUID re-surfaces the same SHAs) and makes it impossible for a SHA to appear in two changelogs (once it's been sealed to a commit SHA, the publication query never returns it again).
 
 To inspect or correct entries directly:
 
@@ -510,6 +665,7 @@ To inspect or correct entries directly:
 sqlite3 ARCHIVE/archive.db
 
 SELECT * FROM edition_shas;
+SELECT * FROM changelogs;
 
 -- Fix a wrong SHA
 UPDATE edition_shas SET sha = 'correctsha' WHERE sha = 'wrongsha';
@@ -529,7 +685,7 @@ Archivist is opinionated — built around the conventions of the LVNACY Apparatu
 
 ### Adding a new changelog type
 
-1. Create `archivist/commands/changelog/yourtype.py` with a `run(args)` function. Use any existing changelog module as a reference — they all follow the same structure: ensure staged → diff → build frontmatter → build body → write. Frontmatter fields are defined directly in the `auto` dict inside the frontmatter builder function.
+1. Create `archivist/commands/changelog/yourtype.py` with a `run(args)` function. Use any existing changelog module as a reference — they all follow the same structure: call `run_changelog()` from `changelog_base.py` with your `build_frontmatter`, `build_body`, and optionally `post_changes`, `post_write`, and `print_summary` callables. Frontmatter fields are defined directly in the `auto` dict inside your frontmatter builder.
 
 2. Add the subcommand parser to `build_parser()` in `cli.py`:
 
@@ -547,7 +703,7 @@ elif cl_command == "yourtype":
     from archivist.commands.changelog.yourtype import run
 ```
 
-4. Add your module type to `APPARATUS_MODULE_TYPES` and `MODULE_CHANGELOG_COMMAND` in `utils.py`.
+4. Add your module type to `APPARATUS_MODULE_TYPES` and `MODULE_CHANGELOG_COMMAND` in `utils/config.py`.
 
 No reinstall needed — editable installs pick up changes immediately.
 
@@ -562,6 +718,21 @@ No reinstall needed — editable installs pick up changes immediately.
 Archivist finds the manifest template by recursively searching `ARCHIVE/` for `MANIFEST_TEMPLATE.md`. To use a different directory structure or template name, update `_find_manifest_template()` in `manifest.py`. Template field order is always respected — frontmatter is rendered by iterating template keys in order.
 
 Changelog frontmatter fields are not template-driven. To add, remove, or reorder fields for a changelog subcommand, edit the `auto` dict inside its `_build_frontmatter()` function directly.
+
+### The `run_changelog()` base runner
+
+All five changelog subcommands delegate to `run_changelog()` in `changelog_base.py`. If you're adding a new subcommand, you don't reimplement the pipeline — you provide callables:
+
+| Parameter | Signature | Purpose |
+|---|---|---|
+| `build_frontmatter` | `(ctx: ChangelogContext) -> str` | Build the YAML frontmatter block |
+| `build_body` | `(ctx: ChangelogContext) -> str` | Build the markdown body |
+| `post_changes` | `(ctx: ChangelogContext) -> None` | Analyse the diff; mutate `ctx.data` |
+| `get_extra_paths` | `(git_root: Path) -> list[Path]` | Extra paths to stage and diff |
+| `print_summary` | `(ctx: ChangelogContext) -> None` | Custom summary output |
+| `post_write` | `(ctx: ChangelogContext) -> None` | Side-effects after write (DB, etc.) |
+
+`ChangelogContext` carries everything your callables could want: `git_root`, `output_dir`, raw and processed git changes, the full rename lookup, extracted descriptions, preserved user content, the changelog UUID, and a `data` dict for module-specific state.
 
 ---
 

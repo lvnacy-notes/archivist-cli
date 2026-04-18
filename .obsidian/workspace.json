@@ -13,15 +13,16 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
+                "file": "ARCHIVE/CHANGELOG-2026-04-04.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "CHANGELOG-2026-03-14-48f6da2"
+              "title": "CHANGELOG-2026-04-04"
             }
           }
-        ]
+        ],
+        "stacked": true
       }
     ],
     "direction": "vertical"
@@ -183,18 +184,27 @@
       "bases:Create new base": false
     }
   },
-  "active": "36336ac11d58211f",
+  "active": "2437dd9637702e9b",
   "lastOpenFiles": [
+    "archivist/utils/__pycache__/output.cpython-313.pyc",
+    "archivist/utils/__pycache__/changelog.cpython-313.pyc",
+    "archivist/utils/__pycache__/db.cpython-313.pyc",
+    "archivist/utils/__pycache__/renames.cpython-313.pyc",
+    "ARCHIVE/CHANGELOG-2026-04-04.md.bak",
+    "updates.py",
+    "devdocs/REFACTORING_ROADMAP.md",
+    "frontmatter_updates.py",
+    "archivist/utils/__pycache__/frontmatter.cpython-313.pyc",
+    "archivist/utils/__pycache__/config.cpython-313.pyc",
+    "archivist/utils/__pycache__/__init__.cpython-313.pyc",
+    "archivist/commands/changelog/__pycache__/vault.cpython-313.pyc",
+    "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
     "ARCHIVE/CHANGELOG-2026-03-14.md",
     "ARCHIVE/CHANGELOG-2026-03-13-b1f8438.md",
-    "archivist/formatter.py",
-    "archivist/commands/reclassify.py",
     "ROADMAP.md",
     "ARCHIVE/CHANGELOG-2026-03-13.md",
     "ARCHIVE/CHANGELOG-2026-03-09-dcfcaca.md",
     "AGENTS.md",
-    "ARCHIVE/CHANGELOG-2026-03-09.md",
-    "ARCHIVE/CHANGELOG-2026-03-14-48f6da2.md",
-    "ARCHIVE/CHANGELOG-2026-03-14.md.bak"
+    "ARCHIVE/CHANGELOG-2026-03-09.md"
   ]
 }

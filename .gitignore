@@ -206,7 +206,11 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# System shit
+# System shit and backup files
 .DS_Store
 */.DS_Store
-.agent/
+*.bak
+
+# Dev Notes
+updates.py
+*/TODO.md

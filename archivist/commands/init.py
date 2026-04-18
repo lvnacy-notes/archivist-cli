@@ -14,6 +14,8 @@ from archivist.utils import (
     get_archivist_config_path,
     get_repo_root,
     read_archivist_config,
+    progress,
+    success,
     write_archivist_config,
 )
 
@@ -51,6 +53,43 @@ def _install_hooks(git_root: Path, dry_run: bool = False) -> None:
     install_hooks(git_root, dry_run=dry_run)
 
 
+def _prompt_templater_mode() -> str:
+    """
+    Ask the user how Archivist should handle Templater expressions in frontmatter.
+
+    Three modes:
+
+      resolve  — Archivist resolves the static subset of Templater expressions
+                 at write time (tp.date.*, tp.file.*, tp.frontmatter.*). Anything
+                 it can't handle is left verbatim with a warning. Obsidian not
+                 required. Works in any module.
+
+      preserve — Archivist detects <% %> expressions and round-trips them safely
+                 without touching them. Alt-tab to Obsidian, run
+                 "Templater: replace templates in the active file" yourself.
+
+      false    — Archivist treats <% %> as dumb strings. Use this if your project
+                 has no Templater expressions and you want zero overhead.
+
+    Returns one of: "resolve", "preserve", "false".
+    """
+    print("\n  Templater expression handling.")
+    print("  Does this project use Templater expressions in frontmatter?")
+    print()
+    print("    resolve   — Archivist resolves tp.date.*, tp.file.*, tp.frontmatter.*")
+    print("                at write time. Unresolvable expressions are preserved")
+    print("                verbatim with a warning. No Obsidian required.")
+    print("    preserve  — Archivist detects and safely round-trips <% %> expressions")
+    print("                without resolving them. You handle resolution in Obsidian.")
+    print("    false     — Treat <% %> as plain strings. No Templater handling at all.")
+
+    return _prompt(
+        "Select Templater mode:",
+        ["resolve", "preserve", "false"],
+        default="preserve",
+    )
+
+
 def run(args: argparse.Namespace) -> None:
     git_root = get_repo_root()
     config_path = get_archivist_config_path(git_root)
@@ -60,7 +99,7 @@ def run(args: argparse.Namespace) -> None:
 
     # --- Existing config ---
     if existing is not None:
-        print(f"\n  ✅ Found existing .archivist config:")
+        success("Found existing .archivist config:")
         for k, v in existing.items():
             print(f"     {k}: {v}")
 
@@ -68,7 +107,7 @@ def run(args: argparse.Namespace) -> None:
             # Offer hook reinstall even if config unchanged
             if _confirm("Reinstall git hooks?", default=True):
                 _install_hooks(git_root, dry_run=getattr(args, "dry_run", False))
-            print("\nDone.")
+            progress("Done.")
             return
 
     # --- Apparatus project? ---
@@ -94,22 +133,32 @@ def run(args: argparse.Namespace) -> None:
             "module-type": "general",
         }
 
+    # --- Custom changelog output directory (optional) ---
+    print("\n  Changelog output directory (relative to repo root).")
+    print("  Leave blank to use defaults (ARCHIVE/ or ARCHIVE/CHANGELOG/ by module type).")
+    changelog_dir = input("  changelog-output-dir: ").strip()
+    if changelog_dir:
+        config["changelog-output-dir"] = changelog_dir
+
+    # --- Templater mode ---
+    config["templater"] = _prompt_templater_mode()
+
     # --- Preview / write ---
     print(f"\n  .archivist will be written as:")
     for k, v in config.items():
         print(f"     {k}: {v}")
 
     if getattr(args, "dry_run", False):
-        print("\n  [dry-run] No files written.")
+        progress("  [dry-run] No files written.")
         return
 
     if not _confirm("Write .archivist and install hooks?", default=True):
-        print("\nAborted.")
+        progress("Aborted.")
         sys.exit(0)
 
     write_archivist_config(git_root, config)
-    print(f"\n  ✅ Written: {config_path}")
+    success(f"Written: {config_path}")
 
     _install_hooks(git_root)
 
-    print("\nDone. Run `archivist --help` to see available commands.")
+    progress("Done. Run `archivist --help` to see available commands.")
