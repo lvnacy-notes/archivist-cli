@@ -66,8 +66,11 @@ works-dir: works
 # Defaults: story/publication → ARCHIVE/CHANGELOG/, everything else → ARCHIVE/
 changelog-output-dir: ARCHIVE/LOGS
 
-# Set automatically by archivist init — do not edit by hand
-templater: true
+# Templater expression handling. Set by archivist init — can also be edited directly.
+# resolve  — Archivist resolves tp.date.*, tp.file.*, tp.frontmatter.* at write time
+# preserve — Archivist safely round-trips <% %> expressions without touching them
+# false    — Treat <% %> as plain strings. No handling at all.
+templater: preserve
 ```
 
 ### `ARCHIVE/` directory
@@ -148,7 +151,7 @@ If no `.archivist` config is found, it walks you through setup:
 2. If yes: select a module type from the available list
 3. For `library` modules: set the `works-dir` path (where Archivist scans for catalogued works)
 4. Optionally set a custom `changelog-output-dir` to override the default output location
-5. Automatically detects whether the Obsidian Templater plugin is installed and sets `templater: true/false` accordingly — in a future update, this will allow Archivist to resolve Templater expressions
+5. Prompts for Templater expression handling mode (`resolve`, `preserve`, or `false`) and writes it to `.archivist` — see [Templater support](#templater-support) below
 6. Writes `.archivist` to the repo root
 7. Installs git hooks locally
 
@@ -268,6 +271,41 @@ archivist frontmatter apply-template -t templates/character.md -c character --ta
 | `--dry-run` | | ❌ | Preview without writing to disk |
 
 At least one of `--class`, `--path`, or `--tag` is required.
+
+---
+
+#### Templater support
+
+If your notes use the [Obsidian Templater plugin](https://github.com/SilentVoid13/Templater), Archivist handles `<% %>` expressions in frontmatter values without corrupting them. Behavior is controlled by the `templater` key in `.archivist`, set during `archivist init`:
+
+| Mode | Behavior |
+|---|---|
+| `preserve` | Detects `<% %>` expressions and round-trips them safely. Archivist masks them before any frontmatter manipulation and restores them verbatim afterward — no resolution, no corruption. Open the file in Obsidian and run Templater yourself. |
+| `resolve` | Resolves a static subset of Templater expressions at write time using a Python reimplementation of the relevant `tp.*` API surface. No Obsidian required, no Node.js required. Unresolvable expressions are preserved verbatim with a warning. |
+| `false` | Treats `<% %>` as plain strings. Zero overhead. Use this if your project has no Templater expressions. |
+
+**What `resolve` mode handles:**
+
+```yaml
+# tp.date — all of these resolve correctly
+created:  <% tp.date.now("YYYY-MM-DD") %>
+due:      <% tp.date.now("YYYY-MM-DD", 7) %>
+tomorrow: <% tp.date.tomorrow() %>
+
+# tp.file — resolved against the target note, not the template file
+title:    <% tp.file.title %>
+folder:   <% tp.file.folder() %>
+modified: <% tp.file.last_modified_date("YYYY-MM-DD") %>
+
+# tp.frontmatter — cross-property references within the same note
+slug:     <% tp.frontmatter["title"] %>
+```
+
+**What `resolve` mode does not handle:**
+
+`tp.system`, `tp.user`, `tp.obsidian`, and any expression that requires a running Obsidian instance or user interaction. These are left verbatim with a `⚠️` warning. Switch to `preserve` if your templates rely on them.
+
+**Important:** In `resolve` mode, `apply-template` resolves template default values against the *target note's* context — `tp.file.title` gives you the target note's title, not the template file's. This is the correct behavior.
 
 ---
 
