@@ -53,6 +53,55 @@ BANNER = r"""
 """
 
 
+def _add_note_selection_args(p: argparse.ArgumentParser, *, require_one: bool = False) -> None:
+    """
+    Register the four shared note-selection arguments onto a frontmatter subparser.
+
+    --file, --path, --class, --class-property, --tag
+
+    All optional by default. Pass require_one=True for apply-template, which
+    demands at least one selection criterion because it absolutely refuses to
+    restructure your entire fucking vault on a whim.
+    """
+    scope = p.add_argument_group(
+        "note selection",
+        "Scope the operation. Omit all flags to target every .md file in the repo.\n"
+        "--file is mutually exclusive with every other selector.",
+    )
+    scope.add_argument(
+        "--file",
+        default=None,
+        metavar="FILE",
+        help="Target exactly this one .md file. Cannot be combined with other selectors.",
+    )
+    scope.add_argument(
+        "--path",
+        default=None,
+        metavar="PATH",
+        help="Limit the directory walk to this subtree (relative to repo root)",
+    )
+    scope.add_argument(
+        "-c",
+        "--class",
+        dest="note_class",
+        default=None,
+        metavar="CLASS",
+        help="Only notes whose class frontmatter value matches (e.g. 'character')",
+    )
+    scope.add_argument(
+        "--class-property",
+        default="class",
+        metavar="PROP",
+        help="Frontmatter key used to identify the class (default: class)",
+    )
+    scope.add_argument(
+        "--tag",
+        default=None,
+        metavar="TAG",
+        help="Only notes carrying this tag in their frontmatter",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="archivist",
@@ -135,16 +184,21 @@ def build_parser() -> argparse.ArgumentParser:
     # frontmatter add
     add_p = fm_sub.add_parser(
         "add",
-        help = "Add a property to all notes",
+        help = "Add a property to notes (all, or a scoped selection)",
         description = (
-            "I don't know what to tell you. Add means add, as in this adds a\n"
-            "property to every .md file in the repo. But it also creates a\n"
-            "frontmatter block if there isn't one. It skips notes that already\n"
-            "have the property unless you insist with --overwrite."
+            "Add means add. Adds a property to every .md file that matches\n"
+            "the selection criteria — which defaults to 'all of them' if you\n"
+            "don't bother scoping it. Also creates a frontmatter block if\n"
+            "there isn't one. Skips notes that already have the property\n"
+            "unless you insist with --overwrite.\n\n"
+            "Scope with --file, --path, --class, or --tag. Combine freely.\n"
+            "--file is mutually exclusive with the rest."
             + fmt_examples(
                 "archivist frontmatter add -p reviewed",
                 "archivist frontmatter add -p status -v draft",
-                "archivist frontmatter add -p status -v published --overwrite",
+                "archivist frontmatter add -p status -v draft --class article",
+                "archivist frontmatter add -p status -v published --overwrite --path content/",
+                "archivist frontmatter add -p status -v draft --file notes/one.md",
                 "archivist frontmatter add -p status -v draft --dry-run",
             )
         ),
@@ -169,6 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
         action = "store_true",
         help = "Overwrite the property if it already exists"
     )
+    _add_note_selection_args(add_p)
     add_p.add_argument(
         "--dry-run",
         action = "store_true",
@@ -178,14 +233,19 @@ def build_parser() -> argparse.ArgumentParser:
     # frontmatter remove
     rm_p = fm_sub.add_parser(
         "remove",
-        help = "Remove a property from all notes",
+        help = "Remove a property from notes (all, or a scoped selection)",
         description = (
             "You are smart enough to use my services, so I trust you to understand\n"
-            "what remove means. But just in case: it removes a property and\n"
-            "its value from every .md file in the repo. If removal leaves the\n"
-            "frontmatter block empty, the block is dropped.\n"
+            "what remove means. But just in case: it removes a property and its\n"
+            "value from every matching .md file. If removal leaves the frontmatter\n"
+            "block empty, the block is dropped.\n\n"
+            "Scope with --file, --path, --class, or --tag. Combine freely.\n"
+            "--file is mutually exclusive with the rest.\n"
             + fmt_examples(
                 "archivist frontmatter remove -p status",
+                "archivist frontmatter remove -p status --class article",
+                "archivist frontmatter remove -p status --path content/drafts",
+                "archivist frontmatter remove -p status --file notes/one.md",
                 "archivist frontmatter remove -p status --dry-run",
             )
         ),
@@ -198,6 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar = "PROP",
         help = "Property name to remove"
     )
+    _add_note_selection_args(rm_p)
     rm_p.add_argument(
         "--dry-run",
         action = "store_true",
@@ -207,16 +268,20 @@ def build_parser() -> argparse.ArgumentParser:
     # frontmatter rename
     ren_p = fm_sub.add_parser(
         "rename",
-        help = "Rename a property across all notes",
+        help = "Rename a property across notes (all, or a scoped selection)",
         description = (
-            "Rename is rename, but with a few caveats. Listen (or, read rather)\n"
-            "carefully: this will rename a property across all notes, and it\n"
-            "will preserve its value EXACTLY. You will end up with strings\n"
-            "in fields that previously contained numbers. So check your\n"
-            "fucking work. Handles scalar values, inline lists, and\n"
-            "multi-line block sequences.\n"
+            "Rename is rename, but with a few caveats. Listen carefully: this\n"
+            "will rename a property across all matching notes, and it will\n"
+            "preserve its value EXACTLY. You will end up with strings in fields\n"
+            "that previously contained numbers. So check your fucking work.\n"
+            "Handles scalar values, inline lists, and multi-line block sequences.\n\n"
+            "Scope with --file, --path, --class, or --tag. Combine freely.\n"
+            "--file is mutually exclusive with the rest.\n"
             + fmt_examples(
                 "archivist frontmatter rename -p status -n state",
+                "archivist frontmatter rename -p status -n state --class article",
+                "archivist frontmatter rename -p tags -n keywords --path content/",
+                "archivist frontmatter rename -p tags -n keywords --file notes/one.md",
                 "archivist frontmatter rename -p tags -n keywords --dry-run",
             )
         ),
@@ -236,6 +301,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar = "NEW",
         help="New property name"
     )
+    _add_note_selection_args(ren_p)
     ren_p.add_argument(
         "--dry-run",
         action = "store_true",
@@ -250,9 +316,10 @@ def build_parser() -> argparse.ArgumentParser:
             "Provide a template note with the properties and structure you want,\n"
             "and provide the criteria for which notes it applies to. I'll handle the rest.\n\n"
             "The template is the authority. The template is the law. You built it.\n\n"
-            "Filter by any combination of class, path, and tag — all provided\n"
-            "filters must match (AND logic). At least one is required. I am not\n"
-            "rewriting your entire fucking vault because you forgot to be specific.\n\n"
+            "At least one selection flag is required — --file, --class, --path, or\n"
+            "--tag. All provided filters must match (AND logic). I am not rewriting\n"
+            "your entire fucking vault because you forgot to be specific.\n\n"
+            "--file targets exactly one note and is mutually exclusive with the rest.\n\n"
             "For each matching note:\n\n"
             "  · Adds properties from the template that the note is missing\n"
             "  · Leaves existing values alone\n"
@@ -262,6 +329,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "archivist frontmatter apply-template -t template.md -c character",
                 "archivist frontmatter apply-template -t template.md --path content/essays",
                 "archivist frontmatter apply-template -t template.md --tag draft",
+                "archivist frontmatter apply-template -t template.md --file notes/one.md",
                 "archivist frontmatter apply-template -t template.md -c article --tag draft --path content/",
                 "archivist frontmatter apply-template -t template.md -c location --dry-run",
             )
@@ -275,32 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar = "FILE",
         help = "Path to the template markdown file"
     )
-    tpl_p.add_argument(
-        "-c",
-        "--class",
-        dest = "note_class",
-        default = None,
-        metavar = "CLASS",
-        help = "Class value to match (e.g. 'character', 'location')"
-    )
-    tpl_p.add_argument(
-        "--class-property",
-        default = "class",
-        metavar = "PROP",
-        help = "Frontmatter property used to identify the class (default: class)"
-    )
-    tpl_p.add_argument(
-        "--path",
-        default = None,
-        metavar = "PATH",
-        help = "Limit search to this directory (relative to repo root)"
-    )
-    tpl_p.add_argument(
-        "--tag",
-        default = None,
-        metavar = "TAG",
-        help = "Match notes that carry this tag in their frontmatter"
-    )
+    _add_note_selection_args(tpl_p, require_one=True)
     tpl_p.add_argument(
         "--dry-run",
         action = "store_true",

@@ -1,8 +1,15 @@
 """
 archivist frontmatter add
 
-Add a property to the YAML frontmatter of every note in the repo.
+Add a property to the YAML frontmatter of every note that matches the
+selection criteria. With no selection flags, operates on the entire repo.
 Scopes automatically to the current git repo (or submodule) root.
+
+Selection flags (all optional, combinable except --file):
+  --file   Exactly one note. Mutually exclusive with everything else.
+  --path   Limit the walk to this directory subtree.
+  --class  Only notes whose 'class' frontmatter value matches.
+  --tag    Only notes carrying this tag.
 """
 
 from __future__ import annotations
@@ -13,25 +20,28 @@ from pathlib import Path
 
 from archivist.utils import (
     FRONTMATTER_RE,
+    NoteFilter,
     TemplaterContext,
     TemplaterMode,
-    find_markdown_files,
+    build_note_filter,
     get_repo_root,
     get_templater_mode,
     has_frontmatter,
     has_templater_expression,
     mask_templater_expressions,
     match_property_line,
+    note_matches_filter,
     print_dry_run_header,
-    process_markdown_files,
     progress,
     read_archivist_config,
     remove_property_from_frontmatter,
+    resolve_file_targets,
     resolve_value,
     restore_templater_expressions,
     safe_read_markdown,
     safe_write_markdown,
     success,
+    validate_note_filter,
     warning,
 )
 
@@ -83,6 +93,7 @@ def _process_note(
     overwrite: bool,
     dry_run: bool,
     mode: TemplaterMode,
+    nf: NoteFilter,
 ) -> bool:
     """
     Process a single note. Returns True if a change was made (or would be).
@@ -111,6 +122,12 @@ def _process_note(
 
         raw_fm = match.group(1)
         body = content[match.end():]
+
+        # Class/tag filter check against this note's actual frontmatter.
+        # Path and file scoping are already handled upstream in resolve_file_targets;
+        # we only need to evaluate class and tag here.
+        if not note_matches_filter(nf, raw_fm):
+            return False
 
         # Mask existing expressions before any string operations on raw_fm.
         # Even in PRESERVE mode we need to mask so that _property_exists and
@@ -142,9 +159,11 @@ def _process_note(
 
         new_content = f"---\n{updated_fm}\n---\n{body}"
     else:
-        # No frontmatter block at all — conjure one from thin air.
-        # No masking needed here; there's no existing frontmatter to protect.
-        # We still need to resolve the new line if mode is RESOLVE.
+        # No frontmatter block — notes without frontmatter can't satisfy class/tag
+        # filters. If any metadata filter is active, skip this note.
+        if nf.note_class or nf.tag:
+            return False
+
         final_line = new_line
         if mode is TemplaterMode.RESOLVE and has_templater_expression(new_line):
             ctx = TemplaterContext(note_path, {})
@@ -162,6 +181,9 @@ def _process_note(
 
 
 def run(args: argparse.Namespace) -> None:
+    nf = build_note_filter(args)
+    validate_note_filter(nf, require_at_least_one=False, command_name="frontmatter add")
+
     root = get_repo_root()
     config = read_archivist_config(root)
     mode = get_templater_mode(config)
@@ -176,16 +198,20 @@ def run(args: argparse.Namespace) -> None:
     )
     progress(f"Root: {root}")
 
-    def _callback(f: Path) -> bool:
-        return _process_note(f, args.property, args.value, args.overwrite, args.dry_run, mode)
+    if nf.active_filter_labels:
+        progress(f"Filters: {' AND '.join(nf.active_filter_labels)}")
 
-    files = find_markdown_files(root)
+    files = resolve_file_targets(nf, root)
     if not files:
-        warning(f"No .md files found under '{root}'.")
+        warning(f"No .md files found matching the given criteria.")
         sys.exit(0)
 
     progress(f"Scanning {len(files)} file(s) to add {action}...\n")
-    changed = process_markdown_files(root, _callback)
+
+    def _callback(f: Path) -> bool:
+        return _process_note(f, args.property, args.value, args.overwrite, args.dry_run, mode, nf)
+
+    changed = sum(1 for f in files if _callback(f))
 
     label = "would be updated" if args.dry_run else "updated"
     progress(f"\nDone. {changed}/{len(files)} file(s) {label}.")
