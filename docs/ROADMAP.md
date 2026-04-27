@@ -40,7 +40,7 @@ A partial solution was implemented: `detect_dir_renames` and `reassign_deletions
 
 Until resolved, directory renames require manual review of the generated changelog.
 
-### Templater Support
+### Templater Support ✅
 
 Obsidian's [Templater plugin](https://github.com/SilentVoid13/Templater) allows
 users to embed dynamic expressions in frontmatter property values:
@@ -50,27 +50,19 @@ created: <% tp.date.now("YYYY-MM-DD") %>
 title: <% tp.file.title %>
 ```
 
-Archivist currently has no awareness of these expressions. Any frontmatter
-command that reads and rewrites a file containing unresolved Templater syntax
-may corrupt the expression, mangle the YAML, or silently drop the value.
+**Shipped.** Archivist now handles `<% %>` expressions in frontmatter safely across all four frontmatter commands (`add`, `remove`, `rename`, `apply-template`). Behavior is controlled by the `templater` key in `.archivist`, configured during `archivist init`.
 
-The full design is documented in `TEMPLATER_SUPPORT_PLAN.md`. The short version:
+Three modes:
 
-- **No Node.js.** The implementation is a Python reimplementation of the
-  relevant `tp.*` API surface, scoped to what actually appears in frontmatter
-  (`tp.date`, `tp.file`, `tp.frontmatter`). Interactive and Obsidian-API-bound
-  namespaces (`tp.system`, `tp.obsidian`, `tp.user`) are explicitly out of scope.
-- **Phased delivery.** Phase 1 is safe preservation — mask expressions before
-  YAML manipulation, restore them after, no corruption even before resolution
-  works. Phase 2 adds the resolution engine. Phase 3 adds cross-property
-  references. An optional Phase 4 gates `dukpy` (an embedded JS interpreter)
-  behind an optional dependency group as a fallback evaluator.
-- **Config detection already done.** `archivist init` now detects the Templater
-  plugin and writes `templater: true/false` into `.archivist`. Commands that
-  need to behave differently when Templater is present can read this flag.
+- **`preserve`** — mask expressions before any frontmatter manipulation, restore them verbatim afterward. No resolution, no corruption. The default.
+- **`resolve`** — Python reimplementation of the `tp.date`, `tp.file`, and `tp.frontmatter` API surface. Resolves at write time with no Obsidian or Node.js dependency. Unresolvable expressions (`tp.system`, `tp.user`, `tp.obsidian`) fall back to verbatim with a warning.
+- **`false`** — treat `<% %>` as plain strings. Zero overhead for Templater-free projects.
 
-Start with Phase 1. It is entirely self-contained and eliminates the corruption
-risk without touching the resolution problem at all.
+Implementation lives in `archivist/utils/templater.py`. The mask/restore cycle uses stable sentinel tokens (`__ARCHIVIST_TMPL_N__`) that survive YAML parsing, reordering, and merging without corruption. The expression evaluator uses `ast.literal_eval` for argument parsing — no arbitrary code execution, no external runtime.
+
+`remove` and `rename` intentionally have no Templater machinery — they operate on keys, never values, and cannot corrupt an expression they never touch.
+
+The optional Phase 4 `dukpy` gate (embedded JS fallback evaluator) was deliberately not implemented. The graceful degradation contract — unresolvable expressions left verbatim with a warning — covers the gap without a 40MB optional dependency. Revisit only if production use surfaces a real gap in the resolve-mode coverage.
 
 ### `reclassify` — Structural Migration on Reclassification
 

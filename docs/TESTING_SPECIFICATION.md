@@ -6,11 +6,7 @@
 
 ## Status
 
-The initial suite is complete. Every module and behavior enumerated in the
-original strategy doc has been implemented. This document supersedes that
-doc as the authoritative reference for what the suite covers, what it
-deliberately skips, and how to evolve it without breaking what's already
-working.
+The initial suite is complete. Every module and behavior enumerated in the original strategy doc has been implemented. This document supersedes that doc as the authoritative reference for what the suite covers, what it deliberately skips, and how to evolve it without breaking what's already working.
 
 ---
 
@@ -18,8 +14,7 @@ working.
 
 **Minimal overhead. Maximum confidence where it actually matters.**
 
-Coverage numbers are vanity. What matters is that the following behaviors
-are tested hard enough that a regression cannot hide:
+Coverage numbers are vanity. What matters is that the following behaviors are tested hard enough that a regression cannot hide:
 
 - YAML frontmatter mutation — the core of every command
 - Dry-run safety — the contract we make with every user who doesn't want to blow up their vault
@@ -35,11 +30,7 @@ Everything else is supplementary. Useful, but not load-bearing.
 pytest          # still the only new dependency
 ```
 
-No pytest-mock. No factory_boy. No hypothesis. No bullshit. `unittest.mock`
-is stdlib and covers whatever mocking we could possibly need. For
-git-dependent tests, we spin up a real repo in `tmp_path` — no mocked
-subprocess calls, no fake diff output. If git isn't on PATH, the
-integration tests fail loudly and that is correct behavior.
+No pytest-mock. No factory_boy. No hypothesis. No bullshit. `unittest.mock` is stdlib and covers whatever mocking we could possibly need. For git-dependent tests, we spin up a real repo in `tmp_path` — no mocked subprocess calls, no fake diff output. If git isn't on PATH, the integration tests fail loudly and that is correct behavior.
 
 ---
 
@@ -47,15 +38,16 @@ integration tests fail loudly and that is correct behavior.
 
 ```
 tests/
-├── conftest.py                     # shared fixtures and helpers
+├── conftest.py                      # shared fixtures and helpers
 ├── unit/
-│   ├── test_frontmatter.py         # ✅ complete
-│   ├── test_rename_helpers.py      # ✅ complete
-│   ├── test_changelog_helpers.py   # ✅ complete
-│   └── test_config.py              # ✅ complete
+│   ├── test_changelog_helpers.py    # ✅ complete
+│   ├── test_config.py               # ✅ complete
+│   ├── test_frontmatter.py          # ✅ complete
+│   ├── test_rename_helpers.py       # ✅ complete
+│   └── test_templater.py            # ✅ complete
 └── integration/
-    ├── test_frontmatter_commands.py # ✅ complete
     ├── test_changelog_commands.py   # ✅ complete
+    ├── test_frontmatter_commands.py # ✅ complete
     └── test_seal.py                 # ✅ complete
 ```
 
@@ -74,6 +66,31 @@ pytest -v
 ---
 
 ## What's Covered
+
+### Unit: `test_changelog_helpers.py`
+
+| Function | Coverage |
+|:---------|:---------|
+| `extract_descriptions` | Single-line with content, placeholder skipped, sub-bullet returns list, mixed filled/empty, all bullets preserved, bare colon with no sub-bullets skipped, non-entry lines ignored, deep nested path as key, multiple entries, sub-bullet stops at next top-level entry, empty string, no entries, colon in description value not truncated |
+| `extract_user_content` | Returns content after sentinel, None when absent, empty string when nothing follows sentinel, splits only on first occurrence, multiline content preserved, slightly-malformed sentinel → None, sentinel constant pinned |
+| `format_file_list` | Empty → fallback, no description → placeholder, string description inline, list description → sub-bullets, rename annotation present, no annotation when not renamed, suspicious rename → `⚠️`, clean rename no warning, multiple files, mixed descriptions, no active_renames default, trailing newline always present, list description followed by blank line, same-dir rename shows filename not full path, cross-dir rename shows full path |
+| `generate_changelog_uuid` | Returns string, valid UUID4, correct format (5 groups, version nibble), two calls differ, lowercase |
+
+---
+
+### Unit: `test_config.py`
+
+| Function | Coverage |
+|:---------|:---------|
+| `get_archivist_config_path` | Returns `Path`, filename is exactly `.archivist`, parent is git root |
+| `read_archivist_config` | Valid YAML returns dict, missing file returns `None`, malformed YAML returns `{}` (not None), malformed prints to stderr, malformed does not raise, non-dict YAML returns `{}`, list YAML returns `{}`, None YAML returns `{}`, multikey config, custom keys with hyphens and slashes |
+| `write_archivist_config` | File created, expected keys present, starts with comment header, ends with newline, empty config writes only comment, overwrites existing |
+| `write` / `read` round-trip | String values, all known module types, works-dir, changelog-output-dir, multi-key config |
+| `get_module_type` | Returns correct value, None when file absent, None when key missing, None for malformed config, all known module types |
+| `get_today` | Matches ISO 8601 YYYY-MM-DD, four-digit year, returns string, custom format respected, format without separators, two calls same second return same value |
+| Constants | `APPARATUS_MODULE_TYPES` contains all five, is a list, `MODULE_CHANGELOG_COMMAND` covers all module types, values are valid subcommands, no extra entries (clean bijection) |
+
+---
 
 ### Unit: `test_frontmatter.py`
 
@@ -118,45 +135,46 @@ Rename bugs are silent and insidious. These functions are pure — test them har
 | `process_renames_from_changes` | Empty R, single rename inverted, multiple inverted, other change types ignored, cross-dir rename |
 | `rename_suspicion` | Clean same-dir rename → empty, exact same path → empty, cross-dir flagged, name mismatch flagged, both flags together, substring suppresses mismatch, reverse substring suppresses mismatch, trailing garbage stripped before comparison, warning contains `⚠️` and "double-check" |
 
-**Deep path chain tests:** All functions exercised against 50-level-deep
-nested paths to surface any O(n²) or recursion-limit surprises.
+**Deep path chain tests:** All functions exercised against 50-level-deep nested paths to surface any O(n²) or recursion-limit surprises.
 
-**Pipeline integration tests:** `detect_dir_renames → reassign_deletions →
-process_renames_from_changes` composed end-to-end, including inferred rename
-composition with confirmed renames, and true deletions surviving the full pipeline.
+**Pipeline integration tests:** `detect_dir_renames → reassign_deletions → process_renames_from_changes` composed end-to-end, including inferred rename composition with confirmed renames, and true deletions surviving the full pipeline.
 
 ---
 
-### Unit: `test_changelog_helpers.py`
+### Unit: `test_templater.py`
 
-| Function | Coverage |
-|:---------|:---------|
-| `extract_descriptions` | Single-line with content, placeholder skipped, sub-bullet returns list, mixed filled/empty, all bullets preserved, bare colon with no sub-bullets skipped, non-entry lines ignored, deep nested path as key, multiple entries, sub-bullet stops at next top-level entry, empty string, no entries, colon in description value not truncated |
-| `extract_user_content` | Returns content after sentinel, None when absent, empty string when nothing follows sentinel, splits only on first occurrence, multiline content preserved, slightly-malformed sentinel → None, sentinel constant pinned |
-| `format_file_list` | Empty → fallback, no description → placeholder, string description inline, list description → sub-bullets, rename annotation present, no annotation when not renamed, suspicious rename → `⚠️`, clean rename no warning, multiple files, mixed descriptions, no active_renames default, trailing newline always present, list description followed by blank line, same-dir rename shows filename not full path, cross-dir rename shows full path |
-| `generate_changelog_uuid` | Returns string, valid UUID4, correct format (5 groups, version nibble), two calls differ, lowercase |
+The Templater support layer. The mask/restore cycle and the expression evaluator are the two places most likely to silently corrupt frontmatter in production — an unmasked expression reaching YAML parsing, or a sentinel token surviving into the written file. Both failure modes are tested directly.
 
----
+| Function / Class | Coverage |
+|:-----------------|:---------|
+| `TemplaterMode.from_config` | `resolve`, `preserve`, `false`, `None` → PRESERVE, unrecognized → PRESERVE, whitespace stripped, case-insensitive |
+| `TemplaterMode` (enum values) | Stored `.value` strings match the exact strings written to `.archivist` |
+| `get_templater_mode` | Reads from config dict, `None` config → PRESERVE, missing key → PRESERVE |
+| `has_templater_expression` | Basic expression, plain string, partial opening tag, expression embedded in value, whitespace-control variant (`<%-`), empty string, multiple expressions |
+| `extract_expressions` | Single expression content extracted, multiple expressions, no expressions → empty list, inner whitespace stripped |
+| `mask_templater_expressions` | Expression replaced with sentinel, mask map contains full original token, multiple expressions get distinct numbered sentinels, sentinels numbered left-to-right, no expressions → unchanged string and empty map, YAML-hostile characters (`{`, `}`, `:`) safely masked, whitespace-control variants masked |
+| `restore_templater_expressions` | Restores original expression verbatim, resolved value substituted when provided, unresolved sentinels fall back to original (never reach output as raw tokens), empty mask map → string unchanged, mask → restore roundtrip is identity, partial resolution leaves unresolved expressions intact |
+| `moment_to_strftime` | ISO date (`YYYY-MM-DD`), full datetime with time, long/short month name, long/short weekday, two-digit year, 12-hour clock with AM/PM, complex human-readable format, unknown tokens pass through unchanged |
+| `resolve_value` | `tp.date.now()` default format, explicit format, positive offset, negative offset; `tp.date.tomorrow`, `tp.date.yesterday`; `tp.file.title` property access; `tp.file.folder()` name-only; `tp.frontmatter["key"]` subscript; missing frontmatter key → empty string; unresolvable expression left verbatim; `warn_fn` called exactly once per unresolvable expression; `warn_fn=None` does not raise; expression embedded in plain text; multiple expressions in one value; `fully_resolved=False` when any expression fails; static string literal `<% "..." %>` resolves; plain value with no expressions returns unchanged |
+| `TemplaterContext` / `_TpFile` | `title` returns stem, `folder()` returns parent name, `folder(absolute=True)` returns full path, `path()` returns absolute path, `last_modified_date` returns correctly formatted string, `creation_date` returns correctly formatted string, missing file stat returns `""` gracefully |
+| `_TpFrontmatter` | Subscript access returns string value, missing key returns `""`, `None` frontmatter arg does not raise |
+| `_TpDate` | `now()` default format parses correctly, offset arithmetic matches `timedelta`, `tomorrow` / `yesterday` / `today` aliases consistent with `now()`; reference date with zero offset; reference date with positive offset; malformed reference falls back to today; `weekday()` Monday of known week; `weekday()` Sunday of known week |
 
-### Unit: `test_config.py`
-
-| Function | Coverage |
-|:---------|:---------|
-| `get_archivist_config_path` | Returns `Path`, filename is exactly `.archivist`, parent is git root |
-| `read_archivist_config` | Valid YAML returns dict, missing file returns `None`, malformed YAML returns `{}` (not None), malformed prints to stderr, malformed does not raise, non-dict YAML returns `{}`, list YAML returns `{}`, None YAML returns `{}`, multikey config, custom keys with hyphens and slashes |
-| `write_archivist_config` | File created, expected keys present, starts with comment header, ends with newline, empty config writes only comment, overwrites existing |
-| `write` / `read` round-trip | String values, all known module types, works-dir, changelog-output-dir, multi-key config |
-| `get_module_type` | Returns correct value, None when file absent, None when key missing, None for malformed config, all known module types |
-| `get_today` | Matches ISO 8601 YYYY-MM-DD, four-digit year, returns string, custom format respected, format without separators, two calls same second return same value |
-| Constants | `APPARATUS_MODULE_TYPES` contains all five, is a list, `MODULE_CHANGELOG_COMMAND` covers all module types, values are valid subcommands, no extra entries (clean bijection) |
+**Edge cases specifically pinned:**
+- Colon inside an expression (e.g. `tp.date.now('HH:mm:ss')`) is fully masked — does not survive into the YAML-parsed string
+- Hash character inside an expression masked before YAML can interpret it as a comment
+- Curly braces inside an expression masked before YAML can interpret them as a flow mapping
+- `resolve_value` on a plain string (no expressions) returns it byte-for-byte unchanged
+- Unimplemented namespace (`tp.user`, `tp.system`) degrades to verbatim + warning, never raises
+- `mask_map` values are the full `<% expr %>` token including delimiters, not just the inner content
+- `TemplaterContext` accepts `dict[str, str | list[str]]` (the actual return type of `extract_frontmatter`) without a `TypeError` — pins the `Mapping` covariance fix
+- Longer moment.js tokens take precedence over shorter prefix matches (`YYYY` → `%Y`, not `%y%y`; `MMMM` → `%B`, not downstream token collision)
 
 ---
 
 ### Integration: `test_frontmatter_commands.py`
 
-All tests call `run()` directly against real files in a `git_repo` fixture.
-`monkeypatch.chdir(git_repo.path)` is load-bearing — it makes `get_repo_root()`
-resolve correctly without mocking subprocess. Do not remove it.
+All tests call `run()` directly against real files in a `git_repo` fixture. `monkeypatch.chdir(git_repo.path)` is load-bearing — it makes `get_repo_root()` resolve correctly without mocking subprocess. Do not remove it.
 
 **`frontmatter add`:**
 - Adds property to file with existing frontmatter
@@ -305,32 +323,19 @@ If either fails, stop everything and fix it before touching anything else:
 
 ## What's Deliberately Not Tested
 
-**CLI argument parsing.** argparse has its own tests. We verify that `run()`
-respects `args.dry_run = True`. We do not verify that `--dry-run` populates
-`args.dry_run`.
+**CLI argument parsing.** argparse has its own tests. We verify that `run()` respects `args.dry_run = True`. We do not verify that `--dry-run` populates `args.dry_run`.
 
-**Git internals.** We don't test that `git diff-index` returns the right
-output. We test that `get_git_changes()` correctly parses what git gives back.
+**Git internals.** We don't test that `git diff-index` returns the right output. We test that `get_git_changes()` correctly parses what git gives back.
 
-**YAML parsing correctness.** PyYAML's own test suite covers that. We test
-our wrappers' behavior when YAML is malformed (return `{}`, don't crash)
-and our rendering output (`render_field`). Not PyYAML itself.
+**YAML parsing correctness.** PyYAML's own test suite covers that. We test our wrappers' behavior when YAML is malformed (return `{}`, don't crash) and our rendering output (`render_field`). Not PyYAML itself.
 
-**`manifest` commands.** The manifest pipeline is integration-tested
-implicitly through the publication changelog's DB interaction (the DB schema
-is shared). A dedicated `test_manifest.py` is low priority until a regression
-surfaces.
+**`manifest` commands.** The manifest pipeline is integration-tested implicitly through the publication changelog's DB interaction (the DB schema is shared). A dedicated `test_manifest.py` is low priority until a regression surfaces.
 
-**`reclassify` command.** Untested. It's simple enough that the risk is low
-and it doesn't touch any shared state. Add tests when a bug bites.
+**`reclassify` command.** Untested. It's simple enough that the risk is low and it doesn't touch any shared state. Add tests when a bug bites.
 
-**`hooks install/sync`.** Writing to `~/.git-templates/` in a test suite is
-obnoxious. These commands are simple enough to validate manually. Don't
-bother automating them unless the logic gets substantially more complex.
+**`hooks install/sync`.** Writing to `~/.git-templates/` in a test suite is obnoxious. These commands are simple enough to validate manually. Don't bother automating them unless the logic gets substantially more complex.
 
-**`init` command.** Interactive prompts make this awkward to test. The
-underlying helpers (`read_archivist_config`, `write_archivist_config`,
-`install_hooks`) are all tested individually. The glue is trivial.
+**`init` command.** Interactive prompts make this awkward to test. The underlying helpers (`read_archivist_config`, `write_archivist_config`, `install_hooks`) are all tested individually. The glue is trivial.
 
 ---
 
@@ -338,9 +343,7 @@ underlying helpers (`read_archivist_config`, `write_archivist_config`,
 
 ### Mandatory: Add a test before shipping a bug fix
 
-If something broke in production, the fix must include a test that would
-have caught it. No exceptions. "It was a one-liner" is not a reason to
-skip the test — one-liner bugs are the most embarrassing to repeat.
+If something broke in production, the fix must include a test that would have caught it. No exceptions. "It was a one-liner" is not a reason to skip the test — one-liner bugs are the most embarrassing to repeat.
 
 Pattern:
 ```python
@@ -351,9 +354,7 @@ def test_whatever_the_bug_was(git_repo, monkeypatch):
     ...
 ```
 
-Name the test after what it's catching, not after the bug number or the
-fix. `test_removing_last_property_drops_block` is useful six months later.
-`test_issue_42_fix` is archaeology.
+Name the test after what it's catching, not after the bug number or the fix. `test_removing_last_property_drops_block` is useful six months later. `test_issue_42_fix` is archaeology.
 
 ### Mandatory: Add tests when adding a new command or subcommand
 
@@ -371,25 +372,17 @@ New `frontmatter` subcommand? Write:
 
 ### Mandatory: Add tests when modifying shared helpers
 
-If you touch anything in `archivist/utils/` that already has unit test
-coverage, run the existing tests first. If they pass, good. If your
-change makes them fail, fix the test to reflect the new contract AND
-verify the change is intentional, not a regression.
+If you touch anything in `archivist/utils/` that already has unit test coverage, run the existing tests first. If they pass, good. If your change makes them fail, fix the test to reflect the new contract AND verify the change is intentional, not a regression.
 
-If the helper you're touching has no unit tests yet, add at least the
-happy path and one failure case before shipping your change.
+If the helper you're touching has no unit tests yet, add at least the happy path and one failure case before shipping your change.
 
 ### Recommended: Add tests when a behavior has been described incorrectly
 
-If you find a test that pins the wrong behavior (i.e., the test was
-written against a misunderstanding of what the code should do), fix
-the test AND the code if needed. Don't just make the test pass.
+If you find a test that pins the wrong behavior (i.e., the test was written against a misunderstanding of what the code should do), fix the test AND the code if needed. Don't just make the test pass.
 
 ### Not Worth Testing: Trivial wrappers
 
-If a function is literally `return some_other_thing(arg)` with no
-conditional logic, no state, and no error handling, it's not worth
-a dedicated test. Trust the thing it wraps.
+If a function is literally `return some_other_thing(arg)` with no conditional logic, no state, and no error handling, it's not worth a dedicated test. Trust the thing it wraps.
 
 ---
 
@@ -399,8 +392,7 @@ All fixtures live in `conftest.py`.
 
 ### `git_repo`
 
-A real, initialized git repo in `tmp_path` with a committed initial state
-(`.archivist` file seeded, initial commit made). Returns a `_Repo` instance.
+A real, initialized git repo in `tmp_path` with a committed initial state (`.archivist` file seeded, initial commit made). Returns a `_Repo` instance.
 
 ```python
 git_repo.path           # Path to the repo root
@@ -408,19 +400,13 @@ git_repo.commit({...})  # Write files, stage, commit. Returns short SHA.
 git_repo.stage({...})   # Write files and stage without committing.
 ```
 
-The `_Repo.commit()` dict maps relative path strings to file content strings.
-Parent directories are created automatically.
+The `_Repo.commit()` dict maps relative path strings to file content strings. Parent directories are created automatically.
 
-**`monkeypatch.chdir(git_repo.path)` is required in every integration test**
-that calls a `run()` function. `get_repo_root()` shells out to
-`git rev-parse --show-toplevel`, which resolves relative to the process
-working directory. Without the `chdir`, it finds the actual repo root
-(wherever archivist itself lives) instead of the test repo.
+**`monkeypatch.chdir(git_repo.path)` is required in every integration test** that calls a `run()` function. `get_repo_root()` shells out to `git rev-parse --show-toplevel`, which resolves relative to the process working directory. Without the `chdir`, it finds the actual repo root (wherever archivist itself lives) instead of the test repo.
 
 ### `md_file`
 
-A callable fixture. Returns a function `(name: str, content: str) -> Path`
-that writes a markdown file into `tmp_path`.
+A callable fixture. Returns a function `(name: str, content: str) -> Path` that writes a markdown file into `tmp_path`.
 
 ```python
 note = md_file("note.md", "---\nclass: character\n---\nBody text")
@@ -439,9 +425,7 @@ run_add(args(property="reviewed", dry_run=True))
 
 Default values: `dry_run=False`, `property=None`, `value=None`, `overwrite=False`.
 
-Apply-template tests define their own `_apply_template_args()` factory inline
-because the required kwargs differ completely from the other frontmatter commands.
-Keep them separate.
+Apply-template tests define their own `_apply_template_args()` factory inline because the required kwargs differ completely from the other frontmatter commands. Keep them separate.
 
 ---
 
@@ -449,9 +433,7 @@ Keep them separate.
 
 ### Dry-run test pattern
 
-Used in every changelog and frontmatter integration test class. Compare
-**files only** (`.is_file()`), not directory entries. `find_changelog_output_dir`
-creates `ARCHIVE/` before the dry-run gate.
+Used in every changelog and frontmatter integration test class. Compare **files only** (`.is_file()`), not directory entries. `find_changelog_output_dir` creates `ARCHIVE/` before the dry-run gate.
 
 ```python
 def test_dry_run_writes_absolutely_nothing(self, git_repo, monkeypatch):
@@ -470,8 +452,7 @@ def test_dry_run_writes_absolutely_nothing(self, git_repo, monkeypatch):
 
 ### Sentinel survival test pattern
 
-Used in every changelog integration test class. Two runs, user content
-injected between them.
+Used in every changelog integration test class. Two runs, user content injected between them.
 
 ```python
 def test_user_content_below_sentinel_survives_rerun(self, git_repo, monkeypatch):
@@ -524,10 +505,7 @@ def _read_changelog(output_dir: Path) -> str:
 
 ### Error message conventions
 
-Assertion messages in this test suite are written in the voice documented in
-`AGENTS.md`. They explain what went wrong and why it matters, not just that
-the assertion failed. They point at the likely culprit. This is not decoration
-— it's the difference between a useful failure and a debugging session.
+Assertion messages in this test suite are written in the voice documented in `AGENTS.md`. They explain what went wrong and why it matters, not just that the assertion failed. They point at the likely culprit. This is not decoration — it's the difference between a useful failure and a debugging session.
 
 Bad:
 ```python
@@ -551,8 +529,7 @@ assert first_uuid == second_uuid, (
 
 ## Known Gaps (Accepted)
 
-These are untested and the decision to leave them that way is intentional.
-If any of them surface a real bug, add a test at that point.
+These are untested and the decision to leave them that way is intentional. If any of them surface a real bug, add a test at that point.
 
 | Gap | Reason |
 |:----|:-------|

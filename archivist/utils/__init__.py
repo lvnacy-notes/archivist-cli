@@ -11,3 +11,4 @@ from archivist.utils.rename_helpers import *    # noqa: F401, F403
 from archivist.utils.db import *                # noqa: F401, F403
 from archivist.utils.changelog import *         # noqa: F401, F403
 from archivist.utils.output import *            # noqa: F401, F403
+from archivist.utils.templater import *         # noqa: F401, F403
