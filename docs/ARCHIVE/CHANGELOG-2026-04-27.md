@@ -4,16 +4,16 @@ category:
   - changelog
 log-scope: general
 modified: 2026-04-27
-UUID: b45ddcce-5909-4f0d-86db-4a6d38b89556
+UUID: 4aef118c-6668-4a16-8b8a-539cbe8f1a37
 commit-sha: 
-files-modified: 11
+files-modified: 5
 files-created: 0
 files-archived: 0
 tags:
   - archivist-cli
 ---
 
-# Frontmatter Commands Expanded Selection Criteria & New `ignores` Config Field — 2026-04-27
+# Changelog — 2026-04-27
 
 ## Overview
 
@@ -22,26 +22,19 @@ tags:
 | Date | 2026-04-27 |
 | Commit SHA | [fill in after commit] |
 | Files Added | 0 |
-| Files Modified | 11 |
+| Files Modified | 5 |
 | Files Archived | 0 |
 
 ## Changes
 
 ### Files Modified
-- `.github/README.md`:
-  - updated to include new functionality across
-    - frontmatter commands
-    - config
-- `archivist/cli.py`: [description]
-- `archivist/commands/init.py`: [description]
-- `archivist/commands/reclassify.py`: [description]
-- `archivist/utils/changelog.py`: [description]
-- `archivist/utils/config.py`: [description]
-- `archivist/utils/note_filter.py`: [description]
-- `pyproject.toml`: version bump
-- `tests/integration/test_frontmatter_commands.py`: [description]
-- `tests/unit/test_config.py`: [description]
-- `docs/ARCHIVE/CHANGELOG-2026-04-27-bb2a47c.md` *(renamed from `CHANGELOG-2026-04-27.md`)*:
+- `archivist/commands/changelog/library.py`: type error correction
+- `archivist/commands/changelog/seal.py`:
+  - type error correction
+  - type hardening for commit hashes
+- `archivist/utils/changelog.py`: type error correction
+- `archivist/utils/templater.py`: type error correction
+- `docs/ARCHIVE/CHANGELOG-2026-04-27-92cd2bc.md` *(renamed from `CHANGELOG-2026-04-27.md`)*:
   - backfilled commit hash from prior commit
 
 ### New Files Created
@@ -54,11 +47,10 @@ tags:
 <!-- archivist:auto-end -->
 ## Notes
 
-Feat: Frontmatter Commands & Config Augment
+patch: address CI test failure
 
-- selection criteria for `apply-template` now applied across all frontmatter commands
-- new `ignores` property for `.archivist` config
-- updated test suite for coverage of new features
+- type hardening of commit hash on backfill; test failed due to `int`
+- type errors corrected
 
 ---
 
