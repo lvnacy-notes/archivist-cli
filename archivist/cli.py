@@ -654,10 +654,13 @@ def build_parser() -> argparse.ArgumentParser:
             "`class:` line is touched. Everything else in the frontmatter is\n"
             "left exactly where it is.\n\n"
             "Matching is case-insensitive. The --to value is written verbatim.\n"
-            "Scope with --path to limit the search to a directory or file.\n"
+            "Scope with --path, --file, --class, or --tag. Combine freely.\n"
+            "--file is mutually exclusive with the rest.\n"
+            "Patterns in .archivist `ignores` are respected automatically."
             + fmt_examples(
                 "archivist reclassify --from article --to column",
                 "archivist reclassify --from article --to column --path content/",
+                "archivist reclassify --from article --to column --class article --tag published",
                 "archivist reclassify --from article --to column --dry-run",
             )
         ),
@@ -677,17 +680,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar = "NEW",
         help="New class value to write"
     )
-    rc_parser.add_argument(
-        "--path",
-        default = None,
-        metavar = "PATH",
-        help="Limit search to this file or directory"
-    )
+    _add_note_selection_args(rc_parser)
     rc_parser.add_argument(
         "--dry-run",
         action = "store_true",
         help="Preview changes without writing to disk"
     )
+    
 
     # -----------------------------------------------------------------------
     # hooks

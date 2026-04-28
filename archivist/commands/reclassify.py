@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 from archivist.utils import (
+    NoteFilter,
+    build_note_filter,
     error,
     find_markdown_files,
     get_file_frontmatter,
@@ -27,8 +29,10 @@ from archivist.utils import (
     matches_class_filter,
     print_dry_run_header,
     progress,
+    resolve_file_targets,
     safe_read_markdown,
     safe_write_markdown,
+    validate_note_filter,
     warning,
 )
 
@@ -76,10 +80,6 @@ def _rewrite_class(content: str, old_val: str, new_val: str) -> str | None:
 def run(args: argparse.Namespace) -> None:
     git_root = get_repo_root()
 
-    search_root = (
-        Path(args.path).resolve() if getattr(args, "path", None) else git_root
-    )
-
     old_val = args.from_class.strip()
     new_val = args.to_class.strip()
 
@@ -87,9 +87,16 @@ def run(args: argparse.Namespace) -> None:
         error("--from and --to resolve to the same value. Nothing to do.")
         sys.exit(1)
 
+    # Build a NoteFilter from args so reclassify goes through the same
+    # file resolution path as the frontmatter commands — including ignores.
+    nf = build_note_filter(args)
+    validate_note_filter(nf, require_at_least_one=False, command_name="reclassify")
+
+    all_files = resolve_file_targets(nf, git_root)
+
     # --- Find matching files via frontmatter parse ---
     matched: list[Path] = []
-    for filepath in find_markdown_files(search_root):
+    for filepath in all_files:
         fm: dict[str, str | list[str]] | None = get_file_frontmatter(filepath)
         if fm is None:
             continue

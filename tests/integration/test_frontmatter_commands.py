@@ -16,12 +16,14 @@ find the right repo without us having to mock half the stdlib. Keep it.
 """
 
 from pathlib import Path
+import argparse
 import pytest
 
 from archivist.commands.frontmatter.add import run as run_add
 from archivist.commands.frontmatter.remove import run as run_remove
 from archivist.commands.frontmatter.rename import run as run_rename
 from archivist.commands.frontmatter.apply_template import run as run_apply_template
+from archivist.commands.reclassify import run as run_reclassify
 from archivist.utils import extract_frontmatter, has_frontmatter
 
 pytestmark = pytest.mark.integration
@@ -41,6 +43,20 @@ def _note(*, fm: str = "", body: str = "Body text.") -> str:
 
 def _read(path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _rc_args(**kwargs) -> argparse.Namespace:
+    defaults = {
+        "dry_run": False,
+        "from_class": None,
+        "to_class": None,
+        "file": None,
+        "path": None,
+        "note_class": None,
+        "class_property": "class",
+        "tag": None,
+    }
+    return argparse.Namespace(**{**defaults, **kwargs})
 
 
 # ===========================================================================
@@ -682,3 +698,146 @@ class TestFrontmatterApplyTemplate:
         fm = extract_frontmatter(_read(note))
         assert fm["name"] == "Asha", "Existing value was overwritten. The template should not clobber."
         assert fm["alignment"] == "chaotic evil"
+
+
+# ===========================================================================
+# Ignore patterns (.archivist ignores)
+# ===========================================================================
+
+class TestIgnorePatterns:
+    """
+    Files matching patterns in .archivist `ignores` must be skipped by every
+    frontmatter command. This is tested once here rather than repeated in every
+    command class — the filtering happens in resolve_file_targets(), which all
+    commands go through. If that breaks, it breaks everywhere at once and this
+    class catches it.
+    """
+
+    def _write_archivist(
+        self,
+        root: Path,
+        patterns: list[str]
+    ) -> None:
+        from archivist.utils import write_archivist_config
+        write_archivist_config(root, {"module-type": "general", "ignores": patterns})
+
+    def test_add_skips_ignored_file(
+        self,
+        git_repo,
+        monkeypatch,
+        args
+    ):
+        monkeypatch.chdir(git_repo.path)
+        self._write_archivist(git_repo.path, ["ignored/**"])
+
+        ignored_dir = git_repo.path / "ignored"
+        ignored_dir.mkdir()
+        ignored = ignored_dir / "note.md"
+        ignored.write_text(_note(fm="class: character"), encoding="utf-8")
+        original = _read(ignored)
+
+        normal = git_repo.path / "normal.md"
+        normal.write_text(_note(fm="class: character"), encoding="utf-8")
+
+        run_add(args(property="status", value="draft"))
+
+        assert _read(ignored) == original, (
+            "Ignored file was modified by run_add. "
+            "The ignore pattern did absolutely nothing."
+        )
+        assert extract_frontmatter(_read(normal))["status"] == "draft", (
+            "Normal file was untouched. "
+            "The ignore spec ate everything, not just the ignored path."
+        )
+
+    def test_remove_skips_ignored_file(self, git_repo, monkeypatch, args):
+        monkeypatch.chdir(git_repo.path)
+        self._write_archivist(git_repo.path, ["ignored/**"])
+
+        ignored_dir = git_repo.path / "ignored"
+        ignored_dir.mkdir()
+        ignored = ignored_dir / "note.md"
+        ignored.write_text(_note(fm="class: character\nstatus: draft"), encoding="utf-8")
+        original = _read(ignored)
+
+        normal = git_repo.path / "normal.md"
+        normal.write_text(_note(fm="class: character\nstatus: draft"), encoding="utf-8")
+
+        run_remove(args(property="status"))
+
+        assert _read(ignored) == original, "Ignored file had a property removed. Ignore is broken."
+        assert "status" not in extract_frontmatter(_read(normal))
+
+    def test_ignored_file_passed_to_file_flag_causes_exit(
+        self,
+        git_repo,
+        monkeypatch,
+        args
+    ):
+        """
+        Explicitly targeting an ignored file via --file is a misconfiguration.
+        The command should exit rather than silently process or silently skip.
+        """
+        monkeypatch.chdir(git_repo.path)
+        self._write_archivist(git_repo.path, ["ignored/**"])
+
+        ignored_dir = git_repo.path / "ignored"
+        ignored_dir.mkdir()
+        ignored = ignored_dir / "note.md"
+        ignored.write_text(_note(fm="class: character"), encoding="utf-8")
+
+        with pytest.raises(SystemExit):
+            run_add(args(property="status", value="draft", file=str(ignored)))
+
+    def test_non_ignored_files_in_same_repo_are_unaffected(
+        self,
+        git_repo,
+        monkeypatch,
+        args
+    ):
+        """
+        Paranoia check: the ignore spec should not bleed into files outside
+        the ignored path. A misconfigured spec that matches too broadly would
+        silently process nothing and look like a passing test everywhere else.
+        """
+        monkeypatch.chdir(git_repo.path)
+        self._write_archivist(git_repo.path, ["scratch/**"])
+
+        note = git_repo.path / "notes" / "real.md"
+        note.parent.mkdir()
+        note.write_text(_note(fm="class: character"), encoding="utf-8")
+
+        run_add(args(property="status", value="draft"))
+
+        assert extract_frontmatter(_read(note))["status"] == "draft", (
+            "File outside the ignored path wasn't processed. "
+            "The ignore spec is too broad, or resolve_file_targets broke something."
+        )
+
+    def test_reclassify_skips_ignored_file(
+        self,
+        git_repo,
+        monkeypatch
+    ):
+        monkeypatch.chdir(git_repo.path)
+        self._write_archivist(git_repo.path, ["ignored/**"])
+
+        ignored_dir = git_repo.path / "ignored"
+        ignored_dir.mkdir()
+        ignored = ignored_dir / "note.md"
+        ignored.write_text(_note(fm="class: article"), encoding="utf-8")
+        original = _read(ignored)
+
+        normal = git_repo.path / "normal.md"
+        normal.write_text(_note(fm="class: article"), encoding="utf-8")
+
+        run_reclassify(_rc_args(from_class="article", to_class="column"))
+
+        assert _read(ignored) == original, (
+            "Ignored file was reclassified. "
+            "It went through resolve_file_targets and it shouldn't have."
+        )
+        assert extract_frontmatter(_read(normal))["class"] == "column", (
+            "Normal file wasn't reclassified. "
+            "The ignore spec ate everything, not just the ignored path."
+        )

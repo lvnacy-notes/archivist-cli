@@ -4,16 +4,16 @@ category:
   - changelog
 log-scope: general
 modified: 2026-04-27
-UUID: 67d4abe1-ad50-4c39-9ed2-804a40bd9b1b
+UUID: b45ddcce-5909-4f0d-86db-4a6d38b89556
 commit-sha: 
-files-modified: 8
-files-created: 1
+files-modified: 11
+files-created: 0
 files-archived: 0
 tags:
   - archivist-cli
 ---
 
-# Frontmatter Commands Augment — 2026-04-27
+# Frontmatter Commands Expanded Selection Criteria & New `ignores` Config Field — 2026-04-27
 
 ## Overview
 
@@ -21,25 +21,31 @@ tags:
 |-------|-------|
 | Date | 2026-04-27 |
 | Commit SHA | [fill in after commit] |
-| Files Added | 1 |
-| Files Modified | 8 |
+| Files Added | 0 |
+| Files Modified | 11 |
 | Files Archived | 0 |
 
 ## Changes
 
 ### Files Modified
+- `.github/README.md`:
+  - updated to include new functionality across
+    - frontmatter commands
+    - config
 - `archivist/cli.py`: [description]
-- `archivist/commands/frontmatter/add.py`: [description]
-- `archivist/commands/frontmatter/apply_template.py`: [description]
-- `archivist/commands/frontmatter/remove.py`: [description]
-- `archivist/commands/frontmatter/rename.py`: [description]
-- `archivist/utils/__init__.py`: incorporate `note_filter.py` in barrel export
-- `pyproject.toml`: bump version
-- `docs/ARCHIVE/CHANGELOG-2026-04-20-f2586de.md` *(renamed from `CHANGELOG-2026-04-20.md`)*:
+- `archivist/commands/init.py`: [description]
+- `archivist/commands/reclassify.py`: [description]
+- `archivist/utils/changelog.py`: [description]
+- `archivist/utils/config.py`: [description]
+- `archivist/utils/note_filter.py`: [description]
+- `pyproject.toml`: version bump
+- `tests/integration/test_frontmatter_commands.py`: [description]
+- `tests/unit/test_config.py`: [description]
+- `docs/ARCHIVE/CHANGELOG-2026-04-27-bb2a47c.md` *(renamed from `CHANGELOG-2026-04-27.md`)*:
   - backfilled commit hash from prior commit
 
 ### New Files Created
-- `archivist/utils/note_filter.py`: new module for note selection helpers
+- No new files
 
 ### Files Removed / Archived
 - No files archived
@@ -48,11 +54,11 @@ tags:
 <!-- archivist:auto-end -->
 ## Notes
 
-Feat: Frontmatter Commands Augmentation
+Feat: Frontmatter Commands & Config Augment
 
-- note selection criteria lifted from `apply-template` and applied to all frontmatter commands
-- new `note_filter` utils module to support note selection criteria
-- `cli.py` updated to pass note selection system to all frontmatter commands
+- selection criteria for `apply-template` now applied across all frontmatter commands
+- new `ignores` property for `.archivist` config
+- updated test suite for coverage of new features
 
 ---
 

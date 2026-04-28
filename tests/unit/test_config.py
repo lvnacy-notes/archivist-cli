@@ -14,6 +14,7 @@ from pathlib import Path
 from archivist.utils import (
     APPARATUS_MODULE_TYPES,
     MODULE_CHANGELOG_COMMAND,
+    build_ignore_spec,
     get_archivist_config_path,
     get_module_type,
     get_today,
@@ -253,6 +254,165 @@ class TestWriteReadRoundTrip:
         result = read_archivist_config(tmp_path)
         assert result["module-type"] == "publication"
         assert result["changelog-output-dir"] == "ARCHIVE/CHANGELOG"
+
+
+# ===========================================================================
+# write_archivist_config — ignores serialization
+# ===========================================================================
+
+class TestWriteArchivistConfigIgnores:
+    """
+    ignores is the only list-valued key in .archivist. The serializer has
+    a special branch for it. Make sure that branch actually works before
+    you find out the hard way that it wrote 'ignores: []' as YAML null.
+    """
+
+    def test_empty_ignores_writes_block_sequence_not_null(self, tmp_path):
+        """
+        A bare `ignores:` line parses as null in YAML, not an empty list.
+        We write `ignores:\n  []` to prevent that. Pin it.
+        """
+        write_archivist_config(tmp_path, {"module-type": "general", "ignores": []})
+        content = (tmp_path / ".archivist").read_text(encoding="utf-8")
+        assert "ignores:" in content, "ignores key is missing entirely"
+        # The bare key alone would parse as null — verify the empty sequence marker
+        assert "[]" in content, (
+            "Empty ignores list written as bare key. "
+            "That parses as null, not [], and build_ignore_spec will get None."
+        )
+
+    def test_populated_ignores_writes_each_pattern_as_block_entry(self, tmp_path):
+        write_archivist_config(
+            tmp_path,
+            {"module-type": "general", "ignores": ["ARCHIVE/**", "*.tmp", "scratch/"]}
+        )
+        content = (tmp_path / ".archivist").read_text(encoding = "utf-8")
+        assert '  - "ARCHIVE/**"' in content
+        assert '  - "*.tmp"' in content
+        assert '  - "scratch/"' in content
+
+    def test_ignores_key_appears_in_output(self, tmp_path):
+        write_archivist_config(tmp_path, {"ignores": ["*.tmp"]})
+        content = (tmp_path / ".archivist").read_text(encoding="utf-8")
+        assert "ignores:" in content
+
+    def test_empty_ignores_survives_round_trip_as_empty_list(self, tmp_path):
+        write_archivist_config(tmp_path, {"module-type": "general", "ignores": []})
+        result = read_archivist_config(tmp_path)
+        # PyYAML reads `[]` as an empty list
+        assert result["ignores"] == [], (
+            f"Empty ignores didn't survive the round-trip. Got: {result.get('ignores')!r}. "
+            "build_ignore_spec will choke on this."
+        )
+
+    def test_populated_ignores_survives_round_trip(self, tmp_path):
+        patterns = ["ARCHIVE/**", "*.tmp", "scratch/"]
+        write_archivist_config(tmp_path, {"module-type": "general", "ignores": patterns})
+        result = read_archivist_config(tmp_path)
+        assert result["ignores"] == patterns, (
+            f"Ignore patterns didn't survive the round-trip. "
+            f"Written: {patterns!r}, got back: {result.get('ignores')!r}."
+        )
+
+
+# ===========================================================================
+# build_ignore_spec
+# ===========================================================================
+
+class TestBuildIgnoreSpec:
+    """
+    build_ignore_spec() is the thing that actually does the filtering.
+    If it returns a spec that matches the wrong files — or fails to match
+    the right ones — every frontmatter command quietly processes files it
+    shouldn't. That's a bad day.
+
+    Paths passed to match_file() must be repo-relative strings or Path objects.
+    Absolute paths will silently fail to match. Every test here uses relative
+    paths to mirror what resolve_file_targets actually passes in.
+    """
+
+    def test_returns_pathspec_instance(self, tmp_path):
+        import pathspec
+        (tmp_path / ".archivist").write_text(
+            "module-type: general\nignores:\n  []\n", encoding="utf-8"
+        )
+        spec = build_ignore_spec(tmp_path)
+        assert isinstance(spec, pathspec.PathSpec)
+
+    def test_empty_ignores_matches_nothing(self, tmp_path):
+        write_archivist_config(tmp_path, {"module-type": "general", "ignores": []})
+        spec = build_ignore_spec(tmp_path)
+        assert not spec.match_file("notes/something.md"), (
+            "Empty ignore spec matched a file. "
+            "An empty spec should be a transparent no-op, not a blackhole."
+        )
+
+    def test_absent_ignores_key_matches_nothing(self, tmp_path):
+        """No ignores key at all — should degrade to a spec that matches nothing."""
+        write_archivist_config(tmp_path, {"module-type": "general"})
+        spec = build_ignore_spec(tmp_path)
+        assert not spec.match_file("notes/something.md")
+
+    def test_missing_config_file_matches_nothing(self, tmp_path):
+        """No .archivist at all. Should not raise — just return an empty spec."""
+        spec = build_ignore_spec(tmp_path)
+        assert not spec.match_file("notes/something.md")
+
+    def test_glob_pattern_matches_files_in_directory(self, tmp_path):
+        write_archivist_config(tmp_path, {"ignores": ["ARCHIVE/**"]})
+        spec = build_ignore_spec(tmp_path)
+        assert spec.match_file("ARCHIVE/CHANGELOG-2024-01-01.md")
+        assert not spec.match_file("notes/something.md")
+
+    def test_extension_glob_matches_correct_files(self, tmp_path):
+        write_archivist_config(tmp_path, {"ignores": ["*.tmp"]})
+        spec = build_ignore_spec(tmp_path)
+        assert spec.match_file("scratch.tmp")
+        assert not spec.match_file("scratch.md")
+
+    def test_directory_pattern_matches_files_inside(self, tmp_path):
+        write_archivist_config(tmp_path, {"ignores": ["scratch/"]})
+        spec = build_ignore_spec(tmp_path)
+        assert spec.match_file("scratch/notes.md")
+        assert not spec.match_file("notes/scratch.md")
+
+    def test_negation_pattern_excludes_file_from_ignore(self, tmp_path):
+        """
+        Full .gitignore semantics includes negation with !.
+        Ignore everything in ARCHIVE/ except the index file.
+        """
+        write_archivist_config(
+            tmp_path,
+            {"ignores": ["ARCHIVE/**", "!ARCHIVE/INDEX.md"]}
+        )
+        spec = build_ignore_spec(tmp_path)
+        assert spec.match_file("ARCHIVE/CHANGELOG-2024-01-01.md")
+        assert not spec.match_file("ARCHIVE/INDEX.md")
+
+    def test_single_string_value_tolerated(self, tmp_path):
+        """
+        Someone will write `ignores: "*.tmp"` instead of a list.
+        We handle it rather than blowing up on them.
+        """
+        (tmp_path / ".archivist").write_text(
+            "module-type: general\nignores: '*.tmp'\n", encoding="utf-8"
+        )
+        spec = build_ignore_spec(tmp_path)
+        assert spec.match_file("scratch.tmp"), (
+            "Single-string ignores value wasn't tolerated. "
+            "We said we'd handle this. Handle it."
+        )
+
+    def test_multiple_patterns_all_respected(self, tmp_path):
+        write_archivist_config(
+            tmp_path,
+            {"ignores": ["ARCHIVE/**", "templates/", "*.draft.md"]}
+        )
+        spec = build_ignore_spec(tmp_path)
+        assert spec.match_file("ARCHIVE/something.md")
+        assert spec.match_file("templates/character.md")
+        assert spec.match_file("notes/chapter-one.draft.md")
+        assert not spec.match_file("notes/chapter-one.md")
 
 
 # ===========================================================================

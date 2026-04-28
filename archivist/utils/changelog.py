@@ -6,6 +6,7 @@ import re
 import sys
 import uuid as _uuid_module
 from pathlib import Path
+from typing import cast
 from archivist.utils.config import (
     get_module_type,
     read_archivist_config,
@@ -125,8 +126,8 @@ def find_changelog_output_dir(git_root: Path, module_type: str | None = None) ->
     
     # Check config for custom output dir
     if config and "changelog-output-dir" in config:
-        output_dir = git_root / config["changelog-output-dir"]
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir: Path = git_root / cast(Path, config["changelog-output-dir"])
+        output_dir.mkdir(parents = True, exist_ok = True)
         return output_dir
     
     # Fall back to module-type default
