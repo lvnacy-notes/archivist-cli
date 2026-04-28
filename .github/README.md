@@ -44,17 +44,19 @@ The `ARCHIVE/` directory in the [LVNACY Apparatus](https://github.com/lvnacy-not
 
 Archivist is built around three conventions.
 
-### `.archivist` config
+### `.archivist/` config
 
-A small YAML file at the root of any project Archivist manages:
+A hidden directory, `.archivist/` at the root of any project Archivist manages, where `config.yaml` and any customizations exist.
+
+**`config.yaml`**:
 
 ```yaml
 # .archivist
-apparatus: true
+apparatus: true # true | false
 module-type: story  # story | publication | library | vault | general
 ```
 
-This file tells Archivist what kind of project it is dealing with, which drives changelog routing and git hook behavior. Projects without a `.archivist` file are ignored by the hooks entirely — Archivist never touches repos it has not been asked to manage.
+This file tells Archivist what kind of project it is dealing with, which drives changelog routing and git hook behavior. Projects without a `.archivist/` directory are ignored by the hooks entirely — Archivist never touches repos it has not been asked to manage.
 
 Additional optional fields:
 
@@ -82,6 +84,10 @@ ignores:
   - "*.draft.md"
 ```
 
+**`sample-changelog.py`**
+
+Archivist ships with a sample module complete with instructions on customizing the generated changelogs. Currently this is scoped to modifying changelogs in Library modules. Greater extensibility is planned for future release.
+
 ### `ARCHIVE/` directory
 
 Each Apparatus module maintains an `ARCHIVE/` directory at its root. Archivist writes all generated changelogs directly into this directory (or `ARCHIVE/CHANGELOG/` for story and publication modules by default). For publication modules, `ARCHIVE/` also serves as the search root for `MANIFEST_TEMPLATE.md` — the template that drives edition manifest output.
@@ -99,6 +105,9 @@ Archivist installs two git hooks:
 - **`post-commit`** — always prints commit details (SHA, message, branch). In Archivist-managed repos, also backfills the commit SHA into any manifest included in the commit, and delegates changelog sealing to `archivist changelog seal`.
 
 Hooks are installed globally into `~/.git-templates/hooks/` and copied automatically into new clones. Existing repos can be synced with `archivist hooks sync`.
+
+> [!warning] Existing Git Hooks Will Be Overwritten!
+> Running `archivist init` will overwrite any existing Git Hooks. Before running this command, backup your hooks and add back the functionality you desire after Archivist has written the hooks needed. Subsequent re-runs of `archivist init` will continue to overwrite hooks, so always maintain a backup.
 
 ---
 
@@ -127,7 +136,7 @@ The `-e` flag installs in editable mode — edits to source files take effect im
 
 **Requirements:** Python 3.10+, `git` in your `$PATH`.
 
-**Dependencies:** `pyyaml`, installed automatically. The frontmatter commands are stdlib only; `pyyaml` is required by `manifest` and `changelog`.
+**Dependencies:** `argcomplete`, `pathspec`, and `pyyaml`, installed automatically. The frontmatter commands are stdlib only; `pyyaml` is required by `manifest` and `changelog`; `pathspec` is required by `init` and `migrate`.
 
 ### First-time setup
 
@@ -141,7 +150,8 @@ archivist hooks install
 cd path/to/your/project
 archivist init
 ```
-
+> [!note] Archivist Init
+> Running `archivist init` will also install hooks globally. `archivist hooks install` and `archivist hooks sync` is available should you choose to skip `archivist init` and create the config directory yourself.
 ---
 
 ## Getting Started
@@ -154,15 +164,16 @@ Interactive project setup. Run once per project — or once per machine after cl
 archivist init
 ```
 
-If no `.archivist` config is found, it walks you through setup:
+If no `.archivist/` config directory is found, it walks you through setup:
 
 1. **Is this an Apparatus project?** Yes / No
 2. If yes: select a module type from the available list
 3. For `library` modules: set the `works-dir` path (where Archivist scans for catalogued works)
 4. Optionally set a custom `changelog-output-dir` to override the default output location
 5. Prompts for Templater expression handling mode (`resolve`, `preserve`, or `false`) and writes it to `.archivist` — see [Templater support](#templater-support) below
-6. Writes `.archivist` to the repo root with an empty `ignores` list — open the file afterward and fill it in
-7. Installs git hooks locally
+6. Writes `.archivist/config.yaml` to the repo root with an empty `ignores` list — open the file afterward and fill it in
+7. Copies `sample-changelog.py` to `.archivist/`
+8. Installs git hooks locally
 
 If `.archivist` already exists, it displays the current config and offers to update it or reinstall hooks.
 

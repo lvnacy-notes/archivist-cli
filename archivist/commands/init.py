@@ -1,11 +1,12 @@
 """
 archivist init
 
-Interactive project setup. Writes .archivist config and installs git hooks.
+Interactive project setup. Writes .archivist/config.yaml and installs git hooks.
 Safe to re-run at any time — idempotent, never clobbers existing config without asking.
 """
 
 import argparse
+import importlib.resources
 import sys
 from pathlib import Path
 
@@ -18,6 +19,45 @@ from archivist.utils import (
     success,
     write_archivist_config,
 )
+
+
+def _write_sample_changelog(git_root: Path) -> None:
+    """
+    Write sample-changelog.py into .archivist/ if it isn't already there.
+
+    The source file lives in the archivist package under
+    archivist/data/sample-changelog.py and is read via importlib.resources
+    so this works correctly whether the package is installed as a wheel,
+    editable install, or run directly from source.
+
+    Skips the write if the file already exists — re-running init on a library
+    project that already has a sample (or a live plugin) should not clobber it.
+    Prints a note either way so the user knows what happened.
+    """
+    dest = git_root / ".archivist" / "sample-changelog.py"
+
+    if dest.exists():
+        progress(f"  sample-changelog.py already exists — leaving it alone.")
+        return
+
+    try:
+        ref = importlib.resources.files("archivist.data").joinpath("sample-changelog.py")
+        content = ref.read_text(encoding="utf-8")
+    except Exception as e:
+        # Non-fatal — the plugin system works fine without the sample file.
+        # The user just won't have the reference. Tell them why.
+        progress(
+            f"  ⚠️  Couldn't read bundled sample-changelog.py: {e}\n"
+            "     You can grab it from the Archivist repo if you need it."
+        )
+        return
+
+    dest.write_text(content, encoding="utf-8")
+    success(f"  Written: .archivist/sample-changelog.py")
+    progress(
+        "     Rename it to changelog.py when you're ready to customise.\n"
+        "     It runs as-is — start there."
+    )
 
 
 def _prompt(question: str, options: list[str], default: str | None = None) -> str:
@@ -92,14 +132,14 @@ def _prompt_templater_mode() -> str:
 
 def run(args: argparse.Namespace) -> None:
     git_root = get_repo_root()
-    config_path = get_archivist_config_path(git_root)
     existing = read_archivist_config(git_root)
 
     print(f"\n  📁 Repo root: {git_root}")
 
     # --- Existing config ---
     if existing is not None:
-        success("Found existing .archivist config:")
+        existing_path = get_archivist_config_path(git_root)
+        success(f"Found existing config: {existing_path.relative_to(git_root)}")
         for k, v in existing.items():
             print(f"     {k}: {v}")
 
@@ -128,9 +168,10 @@ def run(args: argparse.Namespace) -> None:
             works_dir = input("  works-dir [works]: ").strip() or "works"
             config["works-dir"] = works_dir
     else:
+        module_type = "general"
         config: dict[str, str | list[str]] = {
             "apparatus":   "false",
-            "module-type": "general",
+            "module-type": module_type,
         }
 
     # --- Custom changelog output directory (optional) ---
@@ -147,25 +188,30 @@ def run(args: argparse.Namespace) -> None:
     config["ignores"] = []
 
     # --- Preview / write ---
-    print(f"\n  .archivist will be written as:")
+    print(f"\n  .archivist/config.yaml will be written as:")
     for k, v in config.items():
         print(f"     {k}: {v}")
 
     if getattr(args, "dry_run", False):
         progress("  [dry-run] No files written.")
+        if is_apparatus and module_type == "library":
+            progress("  [dry-run] Would write: .archivist/sample-changelog.py")
         return
 
-    if not _confirm("Write .archivist and install hooks?", default=True):
+    if not _confirm("Write .archivist/config.yaml and install hooks?", default=True):
         progress("Aborted.")
         sys.exit(0)
 
     write_archivist_config(git_root, config)
-    success(f"Written: {config_path}")
+    success(f"Written: .archivist/config.yaml")
+
+    if is_apparatus and module_type == "library":
+        _write_sample_changelog(git_root)
 
     _install_hooks(git_root)
 
     print(
-        "\n  Open .archivist and fill out `ignores` to exclude files and"
+        "\n  Open .archivist/config.yaml and fill out `ignores` to exclude files and"
         "\n  directories from frontmatter and reclassify operations."
         "\n  Standard .gitignore patterns — same syntax, same rules."
     )

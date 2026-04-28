@@ -24,6 +24,8 @@ Usage:
 
     archivist hooks install              [--dry-run]
     archivist hooks sync                 [--dry-run]
+
+    archivist migrate                    [--dry-run]
 """
 
 import argparse
@@ -753,6 +755,44 @@ def build_parser() -> argparse.ArgumentParser:
         help = "Preview without writing any files"
     )
 
+    # -----------------------------------------------------------------------
+    # migrate
+    # -----------------------------------------------------------------------
+
+    migrate_p = subparsers.add_parser(
+        "migrate",
+        help = "Migrate legacy flat .archivist config to .archivist/ directory form",
+        description = (
+            "One-shot. Reads your flat .archivist file, creates .archivist/,\n"
+            "writes the config to .archivist/config.yaml, and deletes the flat\n"
+            "file. Content is not modified — this is a structural migration only.\n\n"
+            "Safe to preview with --dry-run first. Requires explicit confirmation\n"
+            "before deleting anything because you're an adult and you should know\n"
+            "what you're agreeing to.\n\n"
+            "Already on the directory form? This will tell you and exit.\n"
+            "No flat .archivist to migrate? Same.\n\n"
+            "After migration, stage and commit the changes:\n\n"
+            "    git add .archivist/\n"
+            "    git rm --cached .archivist\n"
+            "    git commit -m 'chore: migrate .archivist to directory form'\n"
+            + fmt_examples(
+                "archivist migrate --dry-run",
+                "archivist migrate",
+            )
+        ),
+        epilog = fmt_warning(
+            "This deletes your flat .archivist file. It is not recoverable\n"
+            "  outside of git. Run --dry-run first. Then run the real thing.\n"
+            "  Don't say you weren't told."
+        ),
+        formatter_class = ArchivistHelpFormatter,
+    )
+    migrate_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview the migration plan without writing or deleting anything"
+    )
+
     return parser
 
 
@@ -791,13 +831,15 @@ def main():
     elif args.command == "changelog":
         cl_command = getattr(args, "cl_command", None)
 
+        from archivist.utils import (
+            get_repo_root,
+            get_module_type,
+            MODULE_CHANGELOG_COMMAND,
+        )
+        from archivist.utils.config import find_changelog_plugin, load_changelog_plugin
+
         # Auto-detect from .archivist when no subcommand was explicitly given
         if cl_command is None:
-            from archivist.utils import (
-                get_repo_root,
-                get_module_type,
-                MODULE_CHANGELOG_COMMAND
-            )
             git_root = get_repo_root()
             module_type = get_module_type(git_root)
             if module_type and module_type in MODULE_CHANGELOG_COMMAND:
@@ -805,6 +847,8 @@ def main():
                 print(f"  → .archivist: module-type '{module_type}' → archivist changelog {cl_command}")
             else:
                 cl_command = "general"
+        else:
+            git_root = get_repo_root()
 
         # Normalize attrs that subcommand run() functions expect but
         # aren't present when routing through the bare `changelog` parser
@@ -812,6 +856,18 @@ def main():
             args.commit_sha = None
         if not hasattr(args, "path"):
             args.path = None
+
+        # Plugin check — only for module-type-routed commands (ie. when no
+        # explicit subcommand was given). Explicit subcommands like
+        # `archivist changelog library` bypass the plugin intentionally:
+        # if you're naming the subcommand, you want the built-in.
+        if getattr(args, "cl_command", None) is None:
+            plugin_path = find_changelog_plugin(git_root)
+            if plugin_path:
+                print(f"  → changelog plugin found: {plugin_path.relative_to(git_root)}")
+                plugin = load_changelog_plugin(plugin_path)
+                plugin.run(args)
+                return
 
         cl_commands = {
             "general": "archivist.commands.changelog.general",
@@ -821,7 +877,7 @@ def main():
             "library": "archivist.commands.changelog.library",
             "seal": "archivist.commands.changelog.seal",
         }
-        
+
         module_path = cl_commands.get(cl_command, "archivist.commands.changelog.general")
         run = importlib.import_module(module_path).run
         run(args)
@@ -836,3 +892,7 @@ def main():
             run_install(args)
         elif args.hooks_command == "sync":
             run_sync(args)
+
+    elif args.command == "migrate":
+        from archivist.commands.migrate import run
+        run(args)
