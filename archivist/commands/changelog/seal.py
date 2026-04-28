@@ -98,7 +98,7 @@ def _backfill_sha(
     """
     content = re.sub(
         r"^commit-sha:[^\n]*",
-        f"commit-sha: {short_sha}",
+        f'commit-sha: "{short_sha}"',
         content,
         flags=re.MULTILINE,
     )

@@ -339,7 +339,10 @@ def _analyse_catalog_changes(changes: GitChanges, git_root: Path) -> LibraryStat
 def _get_works_dir(git_root: Path) -> Path:
     """Return the works directory from .archivist config, defaulting to 'works'."""
     config = read_archivist_config(git_root) or {}
-    return git_root / config.get("works-dir", "works")
+    works_dir = config.get("works-dir", "works")
+    if not isinstance(works_dir, str):
+        works_dir = "works"
+    return git_root / works_dir
 
 
 def _unwrap_wikilink(val: str) -> str:

@@ -71,6 +71,15 @@ changelog-output-dir: ARCHIVE/LOGS
 # preserve — Archivist safely round-trips <% %> expressions without touching them
 # false    — Treat <% %> as plain strings. No handling at all.
 templater: preserve
+
+# Files and directories to exclude from frontmatter and reclassify operations.
+# Standard .gitignore pattern syntax — leading slashes, double-star globs,
+# negation with !. See https://git-scm.com/docs/gitignore#_pattern_format.
+# Has no effect on changelog or manifest commands — scope those via git staging.
+ignores:
+  - "ARCHIVE/**"
+  - "templates/"
+  - "*.draft.md"
 ```
 
 ### `ARCHIVE/` directory
@@ -152,7 +161,7 @@ If no `.archivist` config is found, it walks you through setup:
 3. For `library` modules: set the `works-dir` path (where Archivist scans for catalogued works)
 4. Optionally set a custom `changelog-output-dir` to override the default output location
 5. Prompts for Templater expression handling mode (`resolve`, `preserve`, or `false`) and writes it to `.archivist` — see [Templater support](#templater-support) below
-6. Writes `.archivist` to the repo root
+6. Writes `.archivist` to the repo root with an empty `ignores` list — open the file afterward and fill it in
 7. Installs git hooks locally
 
 If `.archivist` already exists, it displays the current config and offers to update it or reinstall hooks.
@@ -178,11 +187,25 @@ archivist <command> [subcommand] [options]
 
 Bulk-manage YAML frontmatter properties across every `.md` file in the repo. All subcommands recurse from the git root and support `--dry-run`.
 
+All subcommands share the same set of optional selection flags for scoping which files are processed:
+
+| Flag | Short | Description |
+|---|---|---|
+| `--file` | `-f` | Operate on exactly one file. Mutually exclusive with all other selection flags. |
+| `--path` | | Limit the walk to this directory subtree (relative to repo root). |
+| `--class` | `-c` | Only process notes whose `class` frontmatter value matches (case-insensitive). |
+| `--class-property` | | Frontmatter key used as the class discriminator (default: `class`). |
+| `--tag` | | Only process notes carrying this tag in their frontmatter. |
+
+All provided filters combine with AND logic. With no selection flags, the command operates on every `.md` file in the repo.
+
+Files and directories listed in `ignores` in `.archivist` are excluded automatically from all frontmatter commands. Explicitly targeting an ignored file via `--file` is an error.
+
 ---
 
 #### `archivist frontmatter add`
 
-Adds a property to the frontmatter of every note in the repo. Creates a frontmatter block if one does not exist. Skips notes that already have the property unless `--overwrite` is passed.
+Adds a property to the frontmatter of every note in scope. Creates a frontmatter block if one does not exist. Skips notes that already have the property unless `--overwrite` is passed.
 
 ```bash
 # Add a bare key with no value
@@ -193,6 +216,10 @@ archivist frontmatter add -p status -v draft
 
 # Overwrite if already exists
 archivist frontmatter add -p status -v published --overwrite
+
+# Scope to a directory or class
+archivist frontmatter add -p status -v draft --path content/characters
+archivist frontmatter add -p status -v draft --class character
 
 # Preview without writing
 archivist frontmatter add -p status -v draft --dry-run
@@ -205,14 +232,17 @@ archivist frontmatter add -p status -v draft --dry-run
 | `--overwrite` | | ❌ | Overwrite if the property already exists |
 | `--dry-run` | | ❌ | Preview without writing to disk |
 
+Plus all shared [selection flags](#archivist-frontmatter) above.
+
 ---
 
 #### `archivist frontmatter remove`
 
-Removes a property and its value from every note in the repo. If the removal leaves the frontmatter block empty, the block is dropped entirely.
+Removes a property and its value from every note in scope. If the removal leaves the frontmatter block empty, the block is dropped entirely.
 
 ```bash
 archivist frontmatter remove -p status
+archivist frontmatter remove -p status --class character
 archivist frontmatter remove -p status --dry-run
 ```
 
@@ -221,14 +251,17 @@ archivist frontmatter remove -p status --dry-run
 | `--property` | `-p` | ✅ | Property name to remove |
 | `--dry-run` | | ❌ | Preview without writing to disk |
 
+Plus all shared [selection flags](#archivist-frontmatter) above.
+
 ---
 
 #### `archivist frontmatter rename`
 
-Renames a property key across all notes, preserving its value exactly. Handles scalar values, inline lists, and multi-line block sequences.
+Renames a property key across all notes in scope, preserving its value exactly. Handles scalar values, inline lists, and multi-line block sequences.
 
 ```bash
 archivist frontmatter rename -p status -n state
+archivist frontmatter rename -p tags -n keywords --path content/
 archivist frontmatter rename -p tags -n keywords --dry-run
 ```
 
@@ -237,6 +270,8 @@ archivist frontmatter rename -p tags -n keywords --dry-run
 | `--property` | `-p` | ✅ | Current property name |
 | `--new-name` | `-n` | ✅ | New property name |
 | `--dry-run` | | ❌ | Preview without writing to disk |
+
+Plus all shared [selection flags](#archivist-frontmatter) above.
 
 ---
 

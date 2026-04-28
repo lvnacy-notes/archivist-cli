@@ -125,20 +125,22 @@ def find_changelog_output_dir(git_root: Path, module_type: str | None = None) ->
     
     # Check config for custom output dir
     if config and "changelog-output-dir" in config:
-        output_dir = git_root / config["changelog-output-dir"]
-        output_dir.mkdir(parents=True, exist_ok=True)
-        return output_dir
+        raw = config["changelog-output-dir"]
+        if not isinstance(raw, str):
+            raise TypeError(f"changelog-output-dir in .archivist must be a string, got {type(raw).__name__}")
+        output_dir = git_root / raw
     
-    # Fall back to module-type default
-    if module_type is None:
-        module_type = get_module_type(git_root)
-    
-    if module_type in ("story", "publication"):
-        output_dir = git_root / "ARCHIVE" / "CHANGELOG"
     else:
-        output_dir = git_root / "ARCHIVE"
+        # Fall back to module-type default — only when no custom path was provided.
+        if module_type is None:
+            module_type = get_module_type(git_root)
+        
+        if module_type in ("story", "publication"):
+            output_dir = git_root / "ARCHIVE" / "CHANGELOG"
+        else:
+            output_dir = git_root / "ARCHIVE"
     
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents = True, exist_ok = True)
     return output_dir
 
 

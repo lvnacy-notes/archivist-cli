@@ -22,6 +22,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from archivist.utils.config import build_ignore_spec
+
 from archivist.utils.frontmatter import (
     extract_tags_from_entries,
     find_markdown_files,
@@ -178,16 +180,40 @@ def resolve_file_targets(nf: NoteFilter, repo_root: Path) -> list[Path]:
     """
     Return the list of markdown files that should be processed for this filter.
 
-    If --file was given, the list is exactly that one file (already validated).
-    Otherwise, walk from --path (if set) or repo_root, and return all .md files.
-    Class and tag filtering happen per-note in note_matches_filter — don't do
-    it here, we'd have to read every file twice.
+    If --file was given, the list is exactly that one file (already validated),
+    unless the file matches an ignore pattern — in which case we bail loudly,
+    because silently processing a file the user explicitly ignored is the kind
+    of shit that causes data loss and trust issues.
+
+    Otherwise, walk from --path (if set) or repo_root, strip any files matching
+    the ignore patterns from .archivist, and return what's left. Class and tag
+    filtering happen per-note in note_matches_filter — don't do it here, we'd
+    have to read every file twice.
     """
+    ignore_spec = build_ignore_spec(repo_root)
+
     if nf.is_single_file:
+        assert nf.file is not None
+        try:
+            rel = nf.file.resolve().relative_to(repo_root)
+        except ValueError:
+            # File is outside the repo root entirely — can't match ignore patterns,
+            # let it through. validate_note_filter already confirmed it exists.
+            return [nf.file]
+        if ignore_spec.match_file(rel):
+            _die(
+                f"'{nf.file}' matches an ignore pattern in .archivist.\n"
+                "    If you really want to operate on this file, remove it from `ignores` first."
+            )
         return [nf.file]  # type: ignore[list-item]  # validated non-None above
 
     search_root = (repo_root / nf.path).resolve() if nf.path else repo_root
-    return find_markdown_files(search_root)
+    all_files = find_markdown_files(search_root)
+
+    return [
+        f for f in all_files
+        if not ignore_spec.match_file(f.relative_to(repo_root))
+    ]
 
 
 # ---------------------------------------------------------------------------

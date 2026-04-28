@@ -4,16 +4,16 @@ category:
   - changelog
 log-scope: general
 modified: 2026-04-27
-UUID: 67d4abe1-ad50-4c39-9ed2-804a40bd9b1b
+UUID: 4aef118c-6668-4a16-8b8a-539cbe8f1a37
 commit-sha: 
-files-modified: 8
-files-created: 1
+files-modified: 5
+files-created: 0
 files-archived: 0
 tags:
   - archivist-cli
 ---
 
-# Frontmatter Commands Augment — 2026-04-27
+# Changelog — 2026-04-27
 
 ## Overview
 
@@ -21,25 +21,24 @@ tags:
 |-------|-------|
 | Date | 2026-04-27 |
 | Commit SHA | [fill in after commit] |
-| Files Added | 1 |
-| Files Modified | 8 |
+| Files Added | 0 |
+| Files Modified | 5 |
 | Files Archived | 0 |
 
 ## Changes
 
 ### Files Modified
-- `archivist/cli.py`: [description]
-- `archivist/commands/frontmatter/add.py`: [description]
-- `archivist/commands/frontmatter/apply_template.py`: [description]
-- `archivist/commands/frontmatter/remove.py`: [description]
-- `archivist/commands/frontmatter/rename.py`: [description]
-- `archivist/utils/__init__.py`: incorporate `note_filter.py` in barrel export
-- `pyproject.toml`: bump version
-- `docs/ARCHIVE/CHANGELOG-2026-04-20-f2586de.md` *(renamed from `CHANGELOG-2026-04-20.md`)*:
+- `archivist/commands/changelog/library.py`: type error correction
+- `archivist/commands/changelog/seal.py`:
+  - type error correction
+  - type hardening for commit hashes
+- `archivist/utils/changelog.py`: type error correction
+- `archivist/utils/templater.py`: type error correction
+- `docs/ARCHIVE/CHANGELOG-2026-04-27-92cd2bc.md` *(renamed from `CHANGELOG-2026-04-27.md`)*:
   - backfilled commit hash from prior commit
 
 ### New Files Created
-- `archivist/utils/note_filter.py`: new module for note selection helpers
+- No new files
 
 ### Files Removed / Archived
 - No files archived
@@ -48,11 +47,10 @@ tags:
 <!-- archivist:auto-end -->
 ## Notes
 
-Feat: Frontmatter Commands Augmentation
+patch: address CI test failure
 
-- note selection criteria lifted from `apply-template` and applied to all frontmatter commands
-- new `note_filter` utils module to support note selection criteria
-- `cli.py` updated to pass note selection system to all frontmatter commands
+- type hardening of commit hash on backfill; test failed due to `int`
+- type errors corrected
 
 ---
 

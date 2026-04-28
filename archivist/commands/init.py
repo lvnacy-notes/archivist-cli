@@ -118,7 +118,7 @@ def run(args: argparse.Namespace) -> None:
             "Select module type:",
             APPARATUS_MODULE_TYPES,
         )
-        config = {
+        config: dict[str, str | list[str]] = {
             "apparatus":   "true",
             "module-type": module_type,
         }
@@ -128,7 +128,7 @@ def run(args: argparse.Namespace) -> None:
             works_dir = input("  works-dir [works]: ").strip() or "works"
             config["works-dir"] = works_dir
     else:
-        config = {
+        config: dict[str, str | list[str]] = {
             "apparatus":   "false",
             "module-type": "general",
         }
@@ -142,6 +142,9 @@ def run(args: argparse.Namespace) -> None:
 
     # --- Templater mode ---
     config["templater"] = _prompt_templater_mode()
+
+    # --- Ignores (always seeded, filled in by the user afterward) ---
+    config["ignores"] = []
 
     # --- Preview / write ---
     print(f"\n  .archivist will be written as:")
@@ -160,5 +163,11 @@ def run(args: argparse.Namespace) -> None:
     success(f"Written: {config_path}")
 
     _install_hooks(git_root)
+
+    print(
+        "\n  Open .archivist and fill out `ignores` to exclude files and"
+        "\n  directories from frontmatter and reclassify operations."
+        "\n  Standard .gitignore patterns — same syntax, same rules."
+    )
 
     progress("Done. Run `archivist --help` to see available commands.")

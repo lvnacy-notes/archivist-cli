@@ -47,7 +47,7 @@ class TemplaterMode(Enum):
     DISABLED = "false"
 
     @classmethod
-    def from_config(cls, value: str | None) -> "TemplaterMode":
+    def from_config(cls, value: str | object |None) -> "TemplaterMode":
         """
         Parse a config string into a TemplaterMode.
 
@@ -57,6 +57,8 @@ class TemplaterMode(Enum):
         """
         if value is None:
             return cls.PRESERVE
+        if not isinstance(value, str):
+            return cls.PRESERVE
         normalized = value.strip().lower()
         for member in cls:
             if member.value == normalized:
@@ -65,7 +67,7 @@ class TemplaterMode(Enum):
         return cls.PRESERVE
 
 
-def get_templater_mode(config: dict[str, str] | None) -> TemplaterMode:
+def get_templater_mode(config: Mapping[str, object] | None) -> TemplaterMode:
     """
     Extract and parse the templater mode from a .archivist config dict.
     Returns TemplaterMode.PRESERVE if config is None or key is absent.
