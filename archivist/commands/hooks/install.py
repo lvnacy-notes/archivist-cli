@@ -1,12 +1,16 @@
 """
 archivist hooks install / sync
 
-Writes archivist-aware pre-commit and post-commit hook scripts into
-~/.git-templates/hooks/ so they are automatically copied into any
-new git clone or `git init`.
+`archivist hooks install` — writes hook scripts into ~/.git-templates/hooks/
+and configures git's init.templateDir so every future clone or `git init`
+picks them up automatically. Machine-level, run once.
 
-For existing repos, run `archivist hooks sync` to copy the hooks into
-the current repo's .git/hooks/ directly.
+`archivist hooks sync` — writes hook scripts directly into the current repo's
+.git/hooks/ (or .git/modules/<name>/hooks/ for submodule worktrees). Offers
+to cascade into all detected submodules. Repo-level, run per-project.
+
+These two commands do not overlap. `install` never touches a local repo.
+`sync` never touches global templates. If you want both, run both.
 """
 
 import argparse
@@ -210,7 +214,7 @@ exit 0
 
 
 # ---------------------------------------------------------------------------
-# Install logic
+# Internal primitives
 # ---------------------------------------------------------------------------
 
 def _resolve_hooks_dir(repo_path: Path) -> Path:
@@ -218,8 +222,9 @@ def _resolve_hooks_dir(repo_path: Path) -> Path:
     Return the hooks directory for any repo or submodule worktree.
 
     Regular repos:    repo_path/.git/hooks/
-    Submodules:       repo_path/.git is a file containing the real gitdir path,
-                      e.g. `gitdir: ../.git/modules/submodule-name`
+    Submodules:       repo_path/.git is a pointer file containing the real
+                      gitdir path, e.g. `gitdir: ../.git/modules/sub-name`.
+                      Hooks live in the parent's .git/modules/<name>/hooks/.
     """
     git_entry = repo_path / ".git"
     if git_entry.is_dir():
@@ -237,9 +242,7 @@ def _resolve_hooks_dir(repo_path: Path) -> Path:
 
 
 def _get_submodule_paths(git_root: Path) -> list[Path]:
-    """
-    Return resolved paths for all initialized submodules in git_root.
-    """
+    """Return resolved paths for all initialized submodules in git_root."""
     import subprocess
     try:
         output = subprocess.check_output(
@@ -274,10 +277,17 @@ def _write_hook(hooks_dir: Path, name: str, content: str, dry_run: bool) -> None
     print(f"  ✅ Written: {hook_path}")
 
 
-def install_hooks(git_root: Path | None = None, dry_run: bool = False) -> None:
+# ---------------------------------------------------------------------------
+# Public API — called by init, migrate, and the CLI entry points
+# ---------------------------------------------------------------------------
+
+def install_hooks_global(dry_run: bool = False) -> None:
     """
-    Write hook scripts to ~/.git-templates/hooks/ (global install).
-    If git_root is provided, also writes directly into that repo's .git/hooks/.
+    Write hook scripts to ~/.git-templates/hooks/ and configure
+    git's init.templateDir so future clones and `git init` calls pick
+    them up automatically.
+
+    Machine-level operation. Never touches any specific repo.
     """
     # --- Global templates ---
     global_hooks = Path.home() / ".git-templates" / "hooks"
@@ -286,58 +296,80 @@ def install_hooks(git_root: Path | None = None, dry_run: bool = False) -> None:
     _write_hook(global_hooks, "post-commit", POST_COMMIT_HOOK, dry_run)
 
     if not dry_run:
-        # Ensure git knows about the templates dir
-        result = os.popen("git config --global init.templateDir").read().strip()
-        if result != str(Path.home() / ".git-templates"):
-            os.system(f'git config --global init.templateDir "{Path.home()}/.git-templates"')
+        expected = str(Path.home() / ".git-templates")
+        current = os.popen("git config --global init.templateDir").read().strip()
+        if current != expected:
+            os.system(f'git config --global init.templateDir "{expected}"')
             print(f"  ✅ Set git init.templateDir → ~/.git-templates")
 
+
+def install_hooks_local(git_root: Path, dry_run: bool = False) -> None:
+    """
+    Write hook scripts directly into git_root's hooks directory.
+
+    Works correctly for both regular repos and submodule worktrees — for
+    the latter, resolves the .git pointer file and writes into the parent
+    repo's .git/modules/<name>/hooks/ where git actually looks.
+
+    Repo-level operation. Never touches global templates.
+    """
     # --- Local repo (sync) ---
-    if git_root is not None:
-        local_hooks = _resolve_hooks_dir(git_root)
-        print(f"\n  Syncing to local repo → {local_hooks}")
-        _write_hook(local_hooks, "pre-commit", PRE_COMMIT_HOOK, dry_run)
-        _write_hook(local_hooks, "post-commit", POST_COMMIT_HOOK, dry_run)
+    hooks_dir = _resolve_hooks_dir(git_root)
+    print(f"\n  Syncing hooks → {hooks_dir}")
+    _write_hook(hooks_dir, "pre-commit", PRE_COMMIT_HOOK, dry_run)
+    _write_hook(hooks_dir, "post-commit", POST_COMMIT_HOOK, dry_run)
 
 
 # ---------------------------------------------------------------------------
-# Entry points
+# CLI entry points
 # ---------------------------------------------------------------------------
 
 def run_install(args: argparse.Namespace) -> None:
+    """
+    `archivist hooks install` — global templates only.
+
+    Seeds ~/.git-templates/hooks/ so every future `git init` or clone
+    gets the hooks automatically. Does not touch the current repo.
+    Run once per machine. Re-running is safe — hooks are overwritten in place.
+    """
     dry_run = getattr(args, "dry_run", False)
     if dry_run:
         print("=== DRY RUN — no files written ===")
-    install_hooks(dry_run=dry_run)
+    install_hooks_global(dry_run=dry_run)
     if not dry_run:
-        print("\n  Hooks installed globally. New clones will pick them up automatically.")
-        print("  Run `archivist hooks sync` inside an existing repo to apply them there.")
+        print("\n  Global hooks installed. Future clones will pick them up automatically.")
+        print("  To apply to an existing repo, run `archivist hooks sync` inside it.")
 
 
 def run_sync(args: argparse.Namespace) -> None:
+    """
+    `archivist hooks sync` — local repo only, with optional submodule cascade.
+
+    Writes hooks into the current repo's hooks directory. If submodules are
+    detected, offers to cascade into each one. Does not touch global templates.
+    Run per-project. Re-running is safe.
+    """
     from archivist.utils import get_repo_root
+
     git_root = get_repo_root()
     dry_run = getattr(args, "dry_run", False)
+
     if dry_run:
         print("=== DRY RUN — no files written ===")
 
-    install_hooks(git_root=git_root, dry_run=dry_run)
+    install_hooks_local(git_root, dry_run=dry_run)
 
     # Detect submodules and offer to sync into each one
     submodules = _get_submodule_paths(git_root)
     if submodules:
-        print(f"\n  ⚠️  {len(submodules)} submodule(s) detected:")
+        print(f"\n  {len(submodules)} submodule(s) detected:")
         for sub in submodules:
             print(f"       {sub.relative_to(git_root)}")
         answer = input("\n  Sync hooks into all submodules too? [y/N] ").strip().lower()
         if answer == "y":
             for sub in submodules:
                 try:
-                    hooks_dir = _resolve_hooks_dir(sub)
-                    rel = sub.relative_to(git_root)
-                    print(f"\n  Syncing → {rel}/.git/hooks/")
-                    _write_hook(hooks_dir, "pre-commit", PRE_COMMIT_HOOK, dry_run)
-                    _write_hook(hooks_dir, "post-commit", POST_COMMIT_HOOK, dry_run)
+                    install_hooks_local(sub, dry_run=dry_run)
                 except RuntimeError as e:
                     print(f"  ⚠️  Skipping {sub.name}: {e}", file=sys.stderr)
             if not dry_run:
@@ -345,7 +377,7 @@ def run_sync(args: argparse.Namespace) -> None:
         else:
             print("  Skipping submodules.")
             if not dry_run:
-                print("\n  Hooks synced to current repo only.")
+                print("  Hooks synced to current repo only.")
     else:
         if not dry_run:
-            print("\n  Hooks synced to current repo.")
+            print("\n  Hooks synced.")

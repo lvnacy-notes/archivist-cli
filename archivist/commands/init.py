@@ -1,8 +1,9 @@
 """
 archivist init
 
-Interactive project setup. Writes .archivist/config.yaml and installs git hooks.
-Safe to re-run at any time — idempotent, never clobbers existing config without asking.
+Interactive project setup. Writes .archivist/config.yaml and optionally
+installs git hooks locally. Safe to re-run at any time — idempotent, never
+clobbers existing config without asking.
 """
 
 import argparse
@@ -76,7 +77,7 @@ def _prompt(question: str, options: list[str], default: str | None = None) -> st
             return default
         if raw.isdigit() and 1 <= int(raw) <= len(options):
             return options[int(raw) - 1]
-        print(f"  Please enter a number between 1 and {len(options)}.")
+        print(f"  That's not a number between 1 and {len(options)}. Try again.")
 
 
 def _confirm(question: str, default: bool = True) -> bool:
@@ -87,10 +88,10 @@ def _confirm(question: str, default: bool = True) -> bool:
     return raw in ("y", "yes")
 
 
-def _install_hooks(git_root: Path, dry_run: bool = False) -> None:
-    """Delegate to the hooks install command."""
-    from archivist.commands.hooks.install import install_hooks
-    install_hooks(git_root, dry_run=dry_run)
+def _install_hooks_local(git_root: Path, dry_run: bool = False) -> None:
+    """Install hooks into this repo only. Global templates are the user's call."""
+    from archivist.commands.hooks.install import install_hooks_local
+    install_hooks_local(git_root, dry_run=dry_run)
 
 
 def _prompt_templater_mode() -> str:
@@ -133,6 +134,7 @@ def _prompt_templater_mode() -> str:
 def run(args: argparse.Namespace) -> None:
     git_root = get_repo_root()
     existing = read_archivist_config(git_root)
+    dry_run = getattr(args, "dry_run", False)
 
     print(f"\n  📁 Repo root: {git_root}")
 
@@ -146,7 +148,7 @@ def run(args: argparse.Namespace) -> None:
         if not _confirm("Update configuration?", default=False):
             # Offer hook reinstall even if config unchanged
             if _confirm("Reinstall git hooks?", default=True):
-                _install_hooks(git_root, dry_run=getattr(args, "dry_run", False))
+                _install_hooks_local(git_root, dry_run=dry_run)
             progress("Done.")
             return
 
@@ -187,18 +189,19 @@ def run(args: argparse.Namespace) -> None:
     # --- Ignores (always seeded, filled in by the user afterward) ---
     config["ignores"] = []
 
-    # --- Preview / write ---
+    # --- Preview ---
     print(f"\n  .archivist/config.yaml will be written as:")
     for k, v in config.items():
         print(f"     {k}: {v}")
 
-    if getattr(args, "dry_run", False):
+    if dry_run:
         progress("  [dry-run] No files written.")
         if is_apparatus and module_type == "library":
             progress("  [dry-run] Would write: .archivist/sample-changelog.py")
         return
 
-    if not _confirm("Write .archivist/config.yaml and install hooks?", default=True):
+    # --- Confirm config write ---
+    if not _confirm("Write .archivist/config.yaml?", default=True):
         progress("Aborted.")
         sys.exit(0)
 
@@ -208,7 +211,17 @@ def run(args: argparse.Namespace) -> None:
     if is_apparatus and module_type == "library":
         _write_sample_changelog(git_root)
 
-    _install_hooks(git_root)
+    # --- Confirm hook install (separate decision from config) ---
+    print(
+        "\n  Git hooks handle changelog sealing, manifest backfill, and pre-commit"
+        "\n  prompts. To seed future clones automatically, run `archivist hooks install`."
+    )
+    if _confirm("Install git hooks for this repo?", default=True):
+        _install_hooks_local(git_root)
+    else:
+        progress(
+            "  Skipping hooks. Run `archivist hooks sync` any time to install them."
+        )
 
     print(
         "\n  Open .archivist/config.yaml and fill out `ignores` to exclude files and"
