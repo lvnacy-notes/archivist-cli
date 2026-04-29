@@ -64,9 +64,74 @@ Every command that writes files or modifies state takes a `--dry-run` flag. Any 
 
 Changelog commands preserve user-edited content across re-runs. Any changes to output structure must not discard content that lives after the `<!-- archivist:auto-end -->` sentinel or replaces the per-line `[description]` placeholder.
 
-### Auto-routing via `.archivist`
+### Auto-routing via `.archivist/`
 
-`archivist changelog` with no subcommand reads the `module-type` from `.archivist` and routes to the appropriate subcommand automatically. If no `.archivist` is found, it falls back to `general`. The `--dry-run`, `commit_sha`, and `--path` arguments are defined on the bare `changelog` parser so they pass through correctly regardless of which subcommand is invoked. `--help` is handled by argparse before routing logic runs and will always show the bare `changelog` help — this is a known and accepted limitation. Users who want subcommand-specific help should run `archivist changelog <subcommand> --help` explicitly.
+`archivist changelog` with no subcommand reads the `module-type` from `.archivist/config.yaml` and routes to the appropriate subcommand automatically. If no config is found, it falls back to `general`. The `--dry-run`, `commit_sha`, and `--path` arguments are defined on the bare `changelog` parser so they pass through correctly regardless of which subcommand is invoked. `--help` is handled by argparse before routing logic runs and will always show the bare `changelog` help — this is a known and accepted limitation. Users who want subcommand-specific help should run `archivist changelog <subcommand> --help` explicitly.
+
+The legacy flat `.archivist` file is still supported transparently for backwards compatibility. All new projects use the directory form.
+
+---
+
+## Plugin System
+
+Archivist supports per-project changelog plugins. The convention is simple and deliberate: **the file's existence is the registration**.
+
+### Location
+
+```
+.archivist/
+  config.yaml
+  changelog.py       ← active plugin (loaded automatically)
+  sample-changelog.py ← reference file (never loaded, always ignored)
+```
+
+### Discovery rules
+
+- Archivist looks for `.archivist/changelog.py` on every `archivist changelog` invocation.
+- If found, it loads the plugin and calls its `run(args)`. The built-in subcommand is bypassed entirely.
+- If not found, routing proceeds normally to the built-in subcommand for the configured module type.
+- **Explicit subcommands always bypass the plugin.** `archivist changelog library` runs the built-in library subcommand regardless of whether a plugin exists. The plugin is only active for bare `archivist changelog` invocations.
+- `sample-changelog.py` is never loaded. Only `changelog.py` is recognized. This is intentional and exact.
+
+### The contract
+
+A plugin is a Python file that exposes one callable:
+
+```python
+def run(args: argparse.Namespace) -> None:
+    ...
+```
+
+That function calls `run_changelog()` from `changelog_base` with builder callables. Everything else is up to the plugin.
+
+### Library plugin API
+
+The library module exposes four public functions for plugin composition:
+
+```python
+from archivist.commands.changelog.library import (
+    analyse_catalog,   # post_changes hook — populates ctx.data
+    build_frontmatter, # YAML frontmatter block
+    build_body,        # full changelog body including sentinel
+    print_summary,     # terminal summary after write
+)
+```
+
+Do not import anything prefixed with `_` from the library module. Those are internal and will change without notice.
+
+### Activation and deactivation
+
+- **Activate:** rename `sample-changelog.py` → `changelog.py` and edit.
+- **Deactivate:** delete `changelog.py` or rename it back. Instant revert, no config changes.
+- **Test:** `archivist changelog --dry-run` runs the full pipeline including the plugin. The indicator line confirms which code path ran:
+
+  ```
+  → changelog plugin found: .archivist/changelog.py
+  ```
+
+### Extending to other commands
+
+The plugin convention is designed to extend to other commands (`manifest`, `reclassify`, etc.) using identical discovery logic: Archivist looks for `.archivist/<command>.py`, loads it if present, falls back to built-in if not. This is not yet implemented for commands other than `changelog`.
 
 ---
 
@@ -75,3 +140,5 @@ Changelog commands preserve user-edited content across re-runs. Any changes to o
 - `cli.py` parser definitions — only modify if adding or removing a subcommand.
 - The `<!-- archivist:auto-end -->` sentinel string — it is the boundary between generated and user content. Do not rename or move it.
 - Archive DB schema — the `edition_shas` table structure is shared between `manifest` and `changelog publication`. Migrations require both to be updated together.
+- `.archivist/sample-changelog.py` — this is a reference file written by `init`. Do not modify it. It is intentionally ignored by plugin discovery. Users copy and rename it; Archivist does not load it.
+- The public plugin API in `library.py` (`analyse_catalog`, `build_frontmatter`, `build_body`, `print_summary`) — these are the stable composition surface for plugins. Renaming or removing them is a breaking change.

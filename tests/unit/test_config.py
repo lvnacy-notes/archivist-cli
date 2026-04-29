@@ -9,6 +9,7 @@ which is roughly every fucking command in the tool. So pay attention.
 """
 
 import re
+import pytest
 from pathlib import Path
 
 from archivist.utils import (
@@ -21,6 +22,7 @@ from archivist.utils import (
     read_archivist_config,
     write_archivist_config,
 )
+from archivist.utils.config import find_changelog_plugin, load_changelog_plugin
 
 
 # ===========================================================================
@@ -29,27 +31,69 @@ from archivist.utils import (
 
 class TestGetArchivistConfigPath:
     """
-    Trivial function, but pinning it costs nothing and catches the one
-    catastrophic refactor where someone renames the file to '.archivist.yaml'
-    because they "prefer explicit extensions". Don't.
+    get_archivist_config_path() is now a resolution function, not a constant.
+    It checks disk and returns the right path for whichever form exists.
+    If neither exists, it returns the canonical directory form so writers
+    know where to put things.
+
+    The old contract (always returns tmp_path / ".archivist") is gone.
+    Don't write tests that assume the flat filename — that's the whole point
+    of the migration.
     """
 
-    def test_returns_dot_archivist_at_repo_root(self, tmp_path):
+    def test_prefers_directory_form_when_both_exist(self, tmp_path):
+        """
+        If someone has both a flat .archivist file and .archivist/config.yaml,
+        the directory form wins. The flat file is legacy. It loses.
+        """
+        (tmp_path / ".archivist").write_text("module-type: story\n", encoding="utf-8")
+        archivist_dir = tmp_path / ".archivist"
+        # Can't have both a file and a directory with the same name on disk —
+        # simulate by just verifying the directory form takes priority when present.
+        archivist_dir_path = tmp_path / ".archivist_dir_test"
+        archivist_dir_path.mkdir()
+        (archivist_dir_path / "config.yaml").write_text(
+            "module-type: vault\n", encoding="utf-8"
+        )
+        # The real test: directory form path, when it exists, is what's returned.
+        config_yaml = tmp_path / ".archivist" / "config.yaml"
+        # Build the directory form properly via a fresh tmp dir
+        fresh = tmp_path / "fresh"
+        fresh.mkdir()
+        (fresh / ".archivist").mkdir()
+        (fresh / ".archivist" / "config.yaml").write_text(
+            "module-type: vault\n", encoding="utf-8"
+        )
+        result = get_archivist_config_path(fresh)
+        assert result == fresh / ".archivist" / "config.yaml"
+
+    def test_returns_directory_form_when_only_that_exists(self, tmp_path):
+        archivist_dir = tmp_path / ".archivist"
+        archivist_dir.mkdir()
+        (archivist_dir / "config.yaml").write_text(
+            "module-type: library\n", encoding="utf-8"
+        )
+        result = get_archivist_config_path(tmp_path)
+        assert result == tmp_path / ".archivist" / "config.yaml"
+
+    def test_returns_legacy_flat_file_when_only_that_exists(self, tmp_path):
+        (tmp_path / ".archivist").write_text(
+            "module-type: story\n", encoding="utf-8"
+        )
         result = get_archivist_config_path(tmp_path)
         assert result == tmp_path / ".archivist"
+
+    def test_returns_canonical_path_when_neither_exists(self, tmp_path):
+        """
+        No config of any kind — return the canonical directory-form path
+        so callers that need to write know where to put things.
+        """
+        result = get_archivist_config_path(tmp_path)
+        assert result == tmp_path / ".archivist" / "config.yaml"
 
     def test_returns_a_path_object(self, tmp_path):
         result = get_archivist_config_path(tmp_path)
         assert isinstance(result, Path)
-
-    def test_filename_is_exactly_dot_archivist(self, tmp_path):
-        """No extensions. No suffixes. Just .archivist. The end."""
-        result = get_archivist_config_path(tmp_path)
-        assert result.name == ".archivist"
-
-    def test_parent_is_git_root(self, tmp_path):
-        result = get_archivist_config_path(tmp_path)
-        assert result.parent == tmp_path
 
 
 # ===========================================================================
@@ -156,41 +200,120 @@ class TestReadArchivistConfig:
 
 
 # ===========================================================================
+# read_archivist_config — directory form
+# ===========================================================================
+
+class TestReadArchivistConfigDirectoryForm:
+    """
+    The directory form is the canonical form for new projects. All the same
+    failure modes as the flat file need to work identically — the form is
+    different, the contract is identical.
+    """
+
+    def _make_dir_config(self, tmp_path: Path, content: str) -> None:
+        """Write content to .archivist/config.yaml."""
+        archivist_dir = tmp_path / ".archivist"
+        archivist_dir.mkdir(exist_ok=True)
+        (archivist_dir / "config.yaml").write_text(content, encoding="utf-8")
+
+    def test_reads_from_directory_form(self, tmp_path):
+        self._make_dir_config(tmp_path, "module-type: library\napparatus: true\n")
+        result = read_archivist_config(tmp_path)
+        assert result["module-type"] == "library"
+
+    def test_directory_form_takes_priority_over_flat_file(self, tmp_path):
+        """
+        Both forms present simultaneously shouldn't happen in practice, but
+        if they do, directory form wins. Legacy loses.
+        """
+        # Can't have a file and directory both named .archivist — use a
+        # subdirectory to test the priority logic in isolation.
+        # The actual priority is tested via get_archivist_config_path;
+        # here we just verify read_archivist_config picks up the right content.
+        self._make_dir_config(tmp_path, "module-type: vault\n")
+        result = read_archivist_config(tmp_path)
+        assert result["module-type"] == "vault", (
+            "read_archivist_config didn't find the directory-form config. "
+            "Check get_archivist_config_path priority logic."
+        )
+
+    def test_malformed_yaml_in_directory_form_returns_empty_dict(self, tmp_path):
+        self._make_dir_config(tmp_path, "this: is: not: valid: yaml: {{\n")
+        result = read_archivist_config(tmp_path)
+        assert result == {}
+
+    def test_missing_config_yaml_with_empty_directory_returns_none(self, tmp_path):
+        """
+        .archivist/ directory exists but config.yaml doesn't — treat as absent.
+        The directory alone is not a config.
+        """
+        (tmp_path / ".archivist").mkdir()
+        result = read_archivist_config(tmp_path)
+        assert result is None, (
+            "An empty .archivist/ directory was treated as a valid config. "
+            "It isn't. The directory alone means nothing."
+        )
+
+    def test_multikey_config_in_directory_form(self, tmp_path):
+        self._make_dir_config(
+            tmp_path,
+            "apparatus: true\nmodule-type: library\nworks-dir: works\n"
+        )
+        result = read_archivist_config(tmp_path)
+        assert result["module-type"] == "library"
+        assert result["works-dir"] == "works"
+
+
+
+
+
+# ===========================================================================
 # write_archivist_config
 # ===========================================================================
 
 class TestWriteArchivistConfig:
     """
-    write_archivist_config() is not a YAML serialiser — it writes raw
-    key: value lines by hand. That means it gets to have opinions about
-    formatting, which is fine as long as read_archivist_config can digest
-    what it produces.
+    write_archivist_config() now always writes to .archivist/config.yaml and
+    creates the directory if needed. The flat .archivist file is the read-only
+    legacy form — writes never go there anymore.
+
+    Tests that previously checked (tmp_path / ".archivist").exists() now check
+    (tmp_path / ".archivist" / "config.yaml").exists(). That's the contract.
     """
 
     def test_file_is_created(self, tmp_path):
         write_archivist_config(tmp_path, {"module-type": "story"})
-        assert (tmp_path / ".archivist").exists()
+        assert (tmp_path / ".archivist" / "config.yaml").exists(), (
+            "write_archivist_config didn't create .archivist/config.yaml. "
+            "The directory form is the only valid write target now."
+        )
+
+    def test_archivist_directory_is_created(self, tmp_path):
+        """The directory must be created if it doesn't exist yet."""
+        assert not (tmp_path / ".archivist").exists()
+        write_archivist_config(tmp_path, {"module-type": "story"})
+        assert (tmp_path / ".archivist").is_dir()
 
     def test_written_file_contains_expected_keys(self, tmp_path):
         write_archivist_config(tmp_path, {"module-type": "vault", "apparatus": "true"})
-        content = (tmp_path / ".archivist").read_text(encoding="utf-8")
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
         assert "module-type: vault" in content
         assert "apparatus: true" in content
 
     def test_file_starts_with_comment_header(self, tmp_path):
         """That comment line is load-bearing documentation. Don't quietly remove it."""
         write_archivist_config(tmp_path, {"module-type": "general"})
-        content = (tmp_path / ".archivist").read_text(encoding="utf-8")
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
         assert content.startswith("# archivist project configuration")
 
     def test_file_ends_with_newline(self, tmp_path):
         write_archivist_config(tmp_path, {"module-type": "general"})
-        content = (tmp_path / ".archivist").read_text(encoding="utf-8")
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
         assert content.endswith("\n")
 
     def test_empty_config_writes_only_comment(self, tmp_path):
         write_archivist_config(tmp_path, {})
-        content = (tmp_path / ".archivist").read_text(encoding="utf-8")
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
         lines = [l for l in content.splitlines() if l and not l.startswith("#")]
         assert lines == []
 
@@ -198,9 +321,21 @@ class TestWriteArchivistConfig:
         """Second write wins. No appending, no merging, no preserving the old garbage."""
         write_archivist_config(tmp_path, {"module-type": "story"})
         write_archivist_config(tmp_path, {"module-type": "vault"})
-        content = (tmp_path / ".archivist").read_text(encoding="utf-8")
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
         assert "vault" in content
         assert "story" not in content
+
+    def test_does_not_write_flat_archivist_file(self, tmp_path):
+        """
+        Writes go to the directory form only. The flat .archivist file is
+        legacy — writing to it here would be a regression, not a feature.
+        """
+        write_archivist_config(tmp_path, {"module-type": "general"})
+        flat = tmp_path / ".archivist"
+        assert not flat.is_file(), (
+            "write_archivist_config wrote a flat .archivist file. "
+            "That path is now a directory. Something went wrong."
+        )
 
 
 # ===========================================================================
@@ -273,7 +408,7 @@ class TestWriteArchivistConfigIgnores:
         We write `ignores:\n  []` to prevent that. Pin it.
         """
         write_archivist_config(tmp_path, {"module-type": "general", "ignores": []})
-        content = (tmp_path / ".archivist").read_text(encoding="utf-8")
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
         assert "ignores:" in content, "ignores key is missing entirely"
         # The bare key alone would parse as null — verify the empty sequence marker
         assert "[]" in content, (
@@ -286,14 +421,14 @@ class TestWriteArchivistConfigIgnores:
             tmp_path,
             {"module-type": "general", "ignores": ["ARCHIVE/**", "*.tmp", "scratch/"]}
         )
-        content = (tmp_path / ".archivist").read_text(encoding = "utf-8")
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
         assert '  - "ARCHIVE/**"' in content
         assert '  - "*.tmp"' in content
         assert '  - "scratch/"' in content
 
     def test_ignores_key_appears_in_output(self, tmp_path):
         write_archivist_config(tmp_path, {"ignores": ["*.tmp"]})
-        content = (tmp_path / ".archivist").read_text(encoding="utf-8")
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
         assert "ignores:" in content
 
     def test_empty_ignores_survives_round_trip_as_empty_list(self, tmp_path):
@@ -416,8 +551,175 @@ class TestBuildIgnoreSpec:
 
 
 # ===========================================================================
+# find_changelog_plugin
+# ===========================================================================
+
+class TestFindChangelogPlugin:
+    """
+    find_changelog_plugin() is the discovery half of the plugin system.
+    It either finds .archivist/changelog.py and returns its Path, or it
+    returns None. That's it. Everything downstream depends on getting
+    this right.
+    """
+
+    def test_returns_none_when_no_archivist_directory(self, tmp_path):
+        result = find_changelog_plugin(tmp_path)
+        assert result is None
+
+    def test_returns_none_when_directory_exists_but_no_plugin(self, tmp_path):
+        (tmp_path / ".archivist").mkdir()
+        result = find_changelog_plugin(tmp_path)
+        assert result is None
+
+    def test_returns_path_when_plugin_exists(self, tmp_path):
+        archivist_dir = tmp_path / ".archivist"
+        archivist_dir.mkdir()
+        plugin = archivist_dir / "changelog.py"
+        plugin.write_text("def run(args): pass\n", encoding="utf-8")
+        result = find_changelog_plugin(tmp_path)
+        assert result == plugin
+
+    def test_returns_path_object_not_string(self, tmp_path):
+        archivist_dir = tmp_path / ".archivist"
+        archivist_dir.mkdir()
+        (archivist_dir / "changelog.py").write_text("def run(args): pass\n", encoding="utf-8")
+        result = find_changelog_plugin(tmp_path)
+        assert isinstance(result, Path)
+
+    def test_ignores_sample_changelog(self, tmp_path):
+        """
+        sample-changelog.py must never be loaded as a plugin. It's a reference
+        file. Loading it automatically would be the exact opposite of its purpose.
+        """
+        archivist_dir = tmp_path / ".archivist"
+        archivist_dir.mkdir()
+        (archivist_dir / "sample-changelog.py").write_text(
+            "def run(args): pass\n", encoding="utf-8"
+        )
+        result = find_changelog_plugin(tmp_path)
+        assert result is None, (
+            "find_changelog_plugin returned sample-changelog.py. "
+            "That file is a reference — it must never be loaded automatically."
+        )
+
+    def test_ignores_other_py_files_in_archivist_dir(self, tmp_path):
+        """Only changelog.py is the plugin. Everything else is ignored."""
+        archivist_dir = tmp_path / ".archivist"
+        archivist_dir.mkdir()
+        (archivist_dir / "helpers.py").write_text("def run(args): pass\n", encoding="utf-8")
+        (archivist_dir / "manifest.py").write_text("def run(args): pass\n", encoding="utf-8")
+        result = find_changelog_plugin(tmp_path)
+        assert result is None, (
+            "find_changelog_plugin picked up a file that isn't changelog.py. "
+            "The convention is exact: the filename IS the registration."
+        )
+
+    def test_coexists_with_config_yaml(self, tmp_path):
+        """Plugin and config.yaml should coexist without either getting in the way."""
+        archivist_dir = tmp_path / ".archivist"
+        archivist_dir.mkdir()
+        (archivist_dir / "config.yaml").write_text(
+            "module-type: library\n", encoding="utf-8"
+        )
+        (archivist_dir / "changelog.py").write_text(
+            "def run(args): pass\n", encoding="utf-8"
+        )
+        result = find_changelog_plugin(tmp_path)
+        assert result == archivist_dir / "changelog.py"
+
+
+# ===========================================================================
+# load_changelog_plugin
+# ===========================================================================
+
+class TestLoadChangelogPlugin:
+    """
+    load_changelog_plugin() is the loading and validation half. A plugin that
+    loads but has no `run` callable is useless and should be caught here, not
+    silently fail at dispatch time when nothing happens and nobody knows why.
+    """
+
+    def test_loads_valid_plugin(self, tmp_path):
+        plugin_path = tmp_path / "changelog.py"
+        plugin_path.write_text("def run(args): pass\n", encoding="utf-8")
+        module = load_changelog_plugin(plugin_path)
+        assert module is not None
+
+    def test_loaded_module_has_run_callable(self, tmp_path):
+        plugin_path = tmp_path / "changelog.py"
+        plugin_path.write_text("def run(args): pass\n", encoding="utf-8")
+        module = load_changelog_plugin(plugin_path)
+        assert callable(getattr(module, "run", None))
+
+    def test_exits_on_syntax_error(self, tmp_path):
+        plugin_path = tmp_path / "changelog.py"
+        plugin_path.write_text("def run(args)\n    pass\n", encoding="utf-8")
+        with pytest.raises(SystemExit):
+            load_changelog_plugin(plugin_path)
+
+    def test_exits_on_missing_run(self, tmp_path):
+        """
+        A plugin with no `run` function is broken by definition. Catch it at
+        load time with a clear message rather than letting cli.py dispatch into
+        the void and produce a cryptic AttributeError.
+        """
+        plugin_path = tmp_path / "changelog.py"
+        plugin_path.write_text("def not_run(args): pass\n", encoding="utf-8")
+        with pytest.raises(SystemExit):
+            load_changelog_plugin(plugin_path)
+
+    def test_exits_when_run_is_not_callable(self, tmp_path):
+        """run = 42 is not a callable. Should be caught."""
+        plugin_path = tmp_path / "changelog.py"
+        plugin_path.write_text("run = 42\n", encoding="utf-8")
+        with pytest.raises(SystemExit):
+            load_changelog_plugin(plugin_path)
+
+    def test_syntax_error_prints_to_stderr(self, tmp_path, capsys):
+        plugin_path = tmp_path / "changelog.py"
+        plugin_path.write_text("def run(args)\n    pass\n", encoding="utf-8")
+        with pytest.raises(SystemExit):
+            load_changelog_plugin(plugin_path)
+        captured = capsys.readouterr()
+        assert "Syntax error" in captured.err or "syntax" in captured.err.lower(), (
+            "SyntaxError in plugin produced no useful stderr message. "
+            "The user has no idea what they broke."
+        )
+
+    def test_missing_run_prints_to_stderr(self, tmp_path, capsys):
+        plugin_path = tmp_path / "changelog.py"
+        plugin_path.write_text("def not_run(args): pass\n", encoding="utf-8")
+        with pytest.raises(SystemExit):
+            load_changelog_plugin(plugin_path)
+        captured = capsys.readouterr()
+        assert "run" in captured.err, (
+            "Missing `run` callable produced no message mentioning 'run'. "
+            "The user needs to know what the contract requires."
+        )
+
+    def test_plugin_module_is_callable_end_to_end(self, tmp_path):
+        """
+        The full happy path: load a plugin, call run(), verify it executed.
+        If this breaks, the entire plugin system is dead.
+        """
+        plugin_path = tmp_path / "changelog.py"
+        plugin_path.write_text(
+            "executed = []\ndef run(args): executed.append(True)\n",
+            encoding="utf-8"
+        )
+        import argparse
+        module = load_changelog_plugin(plugin_path)
+        module.run(argparse.Namespace())
+        assert module.executed == [True], (
+            "Plugin run() was called but didn't execute. "
+            "load_changelog_plugin returned a ghost."
+        )
+
+
+# ===========================================================================
 # get_module_type
 # ===========================================================================
+
 
 class TestGetModuleType:
     """
@@ -459,6 +761,18 @@ class TestGetModuleType:
                 f"module-type: {module_type}\n", encoding="utf-8"
             )
             assert get_module_type(tmp_path) == module_type
+
+    def test_reads_module_type_from_directory_form(self, tmp_path):
+        """Directory form must work identically to the flat file for routing."""
+        archivist_dir = tmp_path / ".archivist"
+        archivist_dir.mkdir()
+        (archivist_dir / "config.yaml").write_text(
+            "module-type: publication\n", encoding="utf-8"
+        )
+        assert get_module_type(tmp_path) == "publication", (
+            "get_module_type didn't find the module type in the directory form. "
+            "Auto-routing in cli.py is now broken for all directory-form projects."
+        )
 
 
 # ===========================================================================

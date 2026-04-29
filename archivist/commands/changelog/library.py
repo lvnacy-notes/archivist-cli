@@ -17,6 +17,63 @@ works directory defaults to 'works/' and is configurable via 'works-dir'
 in .archivist. Output is written to ARCHIVE/. Iterative command runs
 will preserve user content and descriptions in the existing changelog
 for that day, if present.
+
+─────────────────────────────────────────────────────────────────────────────
+PUBLIC PLUGIN API
+
+The following functions are intentionally public for use in changelog plugins
+(`.archivist/changelog.py`). Import and compose them freely; don't reach in
+and call anything prefixed with `_` — those are internal and will change
+without notice.
+
+    analyse_catalog(ctx: ChangelogContext) -> None
+        post_changes hook. Runs after rename detection, before content is
+        built. Populates ctx.data with:
+            "lib_stats"      — LibraryStats TypedDict (works, authors,
+                               publications, definitions buckets)
+            "snapshot_block" — str, the pre-formatted ## Catalog Snapshot
+                               section including all Mermaid charts
+
+    build_frontmatter(ctx: ChangelogContext) -> str
+        YAML frontmatter block. Reads lib_stats from ctx.data.
+
+    build_body(ctx: ChangelogContext) -> str
+        Full changelog body including all library sections and the
+        archivist:auto-end sentinel. Reads both lib_stats and
+        snapshot_block from ctx.data.
+
+    print_summary(ctx: ChangelogContext) -> None
+        Terminal summary printed after the write. Reads lib_stats.
+
+The intended composition pattern for a plugin that augments rather than
+replaces the library changelog:
+
+    from archivist.commands.changelog.library import (
+        analyse_catalog,
+        build_body,
+        build_frontmatter,
+        print_summary,
+    )
+
+    def _post_changes(ctx):
+        analyse_catalog(ctx)
+        ctx.data["my_extra"] = _my_analysis(ctx)
+
+    def _build_body(ctx):
+        return build_body(ctx) + _my_extra_sections(ctx)
+
+    def run(args):
+        run_changelog(
+            args,
+            module_type="library",
+            build_frontmatter=build_frontmatter,
+            build_body=_build_body,
+            post_changes=_post_changes,
+            print_summary=print_summary,
+        )
+
+See `.archivist/sample-changelog.py` for the full annotated reference.
+─────────────────────────────────────────────────────────────────────────────
 """
 
 import argparse
@@ -582,11 +639,13 @@ def _build_catalog_snapshot(snapshot: CatalogScanResult, throughput: list[tuple[
 # Post-changes hook
 # ---------------------------------------------------------------------------
 
-def _analyse_catalog(ctx: ChangelogContext) -> None:
+def analyse_catalog(ctx: ChangelogContext) -> None:
     """
     Analyse the diff for catalog-specific content and build the snapshot.
     Runs after the base runner has processed renames. Stores results in
-    ctx.data for use by _build_frontmatter() and _build_body().
+    ctx.data for use by build_frontmatter() and build_body().
+
+    Public — importable by changelog plugins. See module docstring.
     """
     ctx.data["lib_stats"] = _analyse_catalog_changes(ctx.processed_changes, ctx.git_root)
     works_dir = _get_works_dir(ctx.git_root)
@@ -748,7 +807,12 @@ def _other_file_list(
 # Builders
 # ---------------------------------------------------------------------------
 
-def _build_frontmatter(ctx: ChangelogContext) -> str:
+def build_frontmatter(ctx: ChangelogContext) -> str:
+    """
+    Generate the YAML frontmatter block for the library changelog.
+
+    Public — importable by changelog plugins. See module docstring.
+    """
     lib_stats: LibraryStats = cast(LibraryStats, ctx.data["lib_stats"])
     today = get_today()
     auto = {
@@ -777,9 +841,14 @@ def _build_frontmatter(ctx: ChangelogContext) -> str:
     return "\n".join(lines)
 
 
-def _build_body(ctx: ChangelogContext) -> str:
-    lib_stats: LibraryStats = cast(LibraryStats, ctx.data["lib_stats"])
+def build_body(ctx: ChangelogContext) -> str:
+    """
+    Generate the full changelog body for the library changelog.
+
+    Public — importable by changelog plugins. See module docstring.
+    """
     snapshot_block: CatalogScanResult = cast(CatalogScanResult, ctx.data["snapshot_block"])
+    lib_stats: LibraryStats = cast(LibraryStats, ctx.data["lib_stats"])
     descriptions = ctx.descriptions or {}
     commit_sha = ctx.args.commit_sha
     today = get_today()
@@ -894,7 +963,12 @@ def _build_body(ctx: ChangelogContext) -> str:
 """
 
 
-def _print_summary(ctx: ChangelogContext) -> None:
+def print_summary(ctx: ChangelogContext) -> None:
+    """
+    Print the terminal summary after the changelog write.
+
+    Public — importable by changelog plugins. See module docstring.
+    """
     lib_stats: LibraryStats = cast(LibraryStats, ctx.data["lib_stats"])
     works = lib_stats["works"]
     authors = lib_stats["authors"]
@@ -941,8 +1015,8 @@ def run(args: argparse.Namespace) -> None:
     run_changelog(
         args,
         module_type = "library",
-        build_frontmatter = _build_frontmatter,
-        build_body = _build_body,
-        post_changes = _analyse_catalog,
-        print_summary = _print_summary,
+        build_frontmatter = build_frontmatter,
+        build_body = build_body,
+        post_changes = analyse_catalog,
+        print_summary = print_summary,
     )

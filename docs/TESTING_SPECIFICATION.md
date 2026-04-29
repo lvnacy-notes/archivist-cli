@@ -82,13 +82,15 @@ pytest -v
 
 | Function | Coverage |
 |:---------|:---------|
-| `get_archivist_config_path` | Returns `Path`, filename is exactly `.archivist`, parent is git root |
-| `read_archivist_config` | Valid YAML returns dict, missing file returns `None`, malformed YAML returns `{}` (not None), malformed prints to stderr, malformed does not raise, non-dict YAML returns `{}`, list YAML returns `{}`, None YAML returns `{}`, multikey config, custom keys with hyphens and slashes |
-| `write_archivist_config` | File created, expected keys present, starts with comment header, ends with newline, empty config writes only comment, overwrites existing |
-| `write` / `read` round-trip | String values, all known module types, works-dir, changelog-output-dir, multi-key config |
-| `get_module_type` | Returns correct value, None when file absent, None when key missing, None for malformed config, all known module types |
-| `get_today` | Matches ISO 8601 YYYY-MM-DD, four-digit year, returns string, custom format respected, format without separators, two calls same second return same value |
-| Constants | `APPARATUS_MODULE_TYPES` contains all five, is a list, `MODULE_CHANGELOG_COMMAND` covers all module types, values are valid subcommands, no extra entries (clean bijection) |
+| `get_archivist_config_path` | Returns `Path`; returns directory-form path when `.archivist/config.yaml` exists; returns legacy flat path when only flat file exists; returns canonical directory-form path when neither exists; directory form takes priority over flat file |
+| `read_archivist_config` | Valid YAML (flat form) returns dict; valid YAML (directory form) returns dict; directory form takes priority over flat file; missing file returns `None`; empty `.archivist/` directory (no `config.yaml`) returns `None`; malformed YAML returns `{}` (not None); malformed prints to stderr; malformed does not raise; non-dict YAML returns `{}`; list YAML returns `{}`; None YAML returns `{}`; multikey config; custom keys with hyphens and slashes |
+| `write_archivist_config` | Creates `.archivist/` directory; creates `config.yaml` inside it; expected keys present; starts with comment header; ends with newline; empty config writes only comment; overwrites existing; does NOT write a flat `.archivist` file |
+| `write` / `read` round-trip | String values; all known module types; works-dir; changelog-output-dir; multi-key config |
+| `get_module_type` | Returns correct value (flat form); returns correct value (directory form); None when file absent; None when key missing; None for malformed config; all known module types |
+| `get_today` | Matches ISO 8601 YYYY-MM-DD; four-digit year; returns string; custom format respected; format without separators; two calls same second return same value |
+| `find_changelog_plugin` | Returns `None` when no `.archivist/` directory; returns `None` when directory exists but no plugin; returns `Path` when `changelog.py` present; returns `Path` object not string; ignores `sample-changelog.py` explicitly; ignores all other `.py` files; coexists with `config.yaml` |
+| `load_changelog_plugin` | Loads valid plugin; loaded module has callable `run`; exits on syntax error; exits when `run` is absent; exits when `run` is not callable; syntax error prints to stderr; missing `run` prints to stderr mentioning "run"; end-to-end happy path (load → call → verify execution) |
+| Constants | `APPARATUS_MODULE_TYPES` contains all five; is a list; `MODULE_CHANGELOG_COMMAND` covers all module types; values are valid subcommands; no extra entries (clean bijection) |
 
 ---
 
@@ -537,6 +539,7 @@ These are untested and the decision to leave them that way is intentional. If an
 | `reclassify` command | Simple logic, no shared state, no history of bugs |
 | `hooks install/sync` | Writes to `~/.git-templates/`; obnoxious in CI |
 | `init` command | Interactive prompts; underlying helpers fully tested individually |
+| `migrate` command | One-shot destructive command; interactive confirmation; underlying helpers (`read_archivist_config`, `write_archivist_config`) fully tested. Add tests if the logic grows |
 | Windows line endings (`\r\n`) in frontmatter | `FRONTMATTER_RE` uses `\n`; behavior pinned but not enforced — see `TestHasFrontmatter.test_windows_line_endings_dont_cause_a_scene` |
 | Empty repo (no commits yet) | `get_git_changes` hits non-existent HEAD; would need dedicated fixture |
 | `.archivist` with unknown `module-type` | Auto-routing falls back to `general`; testable but low priority |

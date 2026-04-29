@@ -30,12 +30,25 @@ if ! command -v archivist &>/dev/null; then
     exit 0
 fi
 
-# Exit if no .archivist config — this repo is not managed by archivist
-if [ ! -f "$(git rev-parse --show-toplevel)/.archivist" ]; then
+GIT_ROOT=$(git rev-parse --show-toplevel)
+
+# Exit if no .archivist config — this repo is not managed by archivist.
+# Accepts either form: legacy flat file (.archivist) or directory form
+# (.archivist/config.yaml). -f on a directory is false, so don't be that guy.
+_archivist_is_configured() {
+    [ -f "$GIT_ROOT/.archivist" ] || [ -f "$GIT_ROOT/.archivist/config.yaml" ]
+}
+if ! _archivist_is_configured; then
     exit 0
 fi
 
-GIT_ROOT=$(git rev-parse --show-toplevel)
+# Resolve the config path for use as a -newer timestamp reference below.
+# Prefer the directory form; fall back to the flat file.
+if [ -f "$GIT_ROOT/.archivist/config.yaml" ]; then
+    ARCHIVIST_CONFIG="$GIT_ROOT/.archivist/config.yaml"
+else
+    ARCHIVIST_CONFIG="$GIT_ROOT/.archivist"
+fi
 
 # Check for a staged manifest or changelog.
 # Query git directly rather than storing output in a variable and echoing it
@@ -47,7 +60,7 @@ if git diff --cached --name-only | grep -qE '.*-manifest\.md$'; then
 fi
 
 # Only an UNSEALED changelog satisfies this check. Sealed changelogs carry a
-# short SHA suffix (CHANGELOG-YYYY-MM-DD-{ sha }.md) because they are closed
+# short SHA suffix (CHANGELOG-YYYY-MM-DD-{sha}.md) because they are closed
 # records that document a past commit. They have nothing to do with the
 # changes currently staged. If only a sealed changelog is in the diff, the
 # hook correctly falls through to the prompt — that is intentional behaviour,
@@ -75,7 +88,7 @@ case "$CHOICE" in
         printf "  Edition directory path: "
         read -r EDITION_DIR </dev/tty
         archivist manifest "$EDITION_DIR"
-        MANIFEST_FILE=$(find "$GIT_ROOT" -name '*-manifest.md' -not -path '*/.git/*' -newer "$GIT_ROOT/.archivist" 2>/dev/null | head -1)
+        MANIFEST_FILE=$(find "$GIT_ROOT" -name '*-manifest.md' -not -path '*/.git/*' -newer "$ARCHIVIST_CONFIG" 2>/dev/null | head -1)
         if [ -n "$MANIFEST_FILE" ]; then
             git add "$MANIFEST_FILE"
             echo "  ✅ Manifest staged."
@@ -83,7 +96,7 @@ case "$CHOICE" in
         ;;
     3)
         archivist changelog
-        CHANGELOG_FILE=$(find "$GIT_ROOT/ARCHIVE" -name "CHANGELOG-*.md" -newer "$GIT_ROOT/.archivist" 2>/dev/null | head -1)
+        CHANGELOG_FILE=$(find "$GIT_ROOT/ARCHIVE" -name "CHANGELOG-*.md" -newer "$ARCHIVIST_CONFIG" 2>/dev/null | head -1)
         if [ -n "$CHANGELOG_FILE" ]; then
             git add "$CHANGELOG_FILE"
             echo "  ✅ Changelog staged."
@@ -136,9 +149,9 @@ echo "   💬 Message: $COMMIT_MESSAGE"
 echo "   🌿 Branch:  $CURRENT_BRANCH"
 echo ""
 echo "📋 For PR creation, use:"
-echo "   \\"Create PR for commit $COMMIT_SHORT from $CURRENT_BRANCH to main\\""
+echo "   \"Create PR for commit $COMMIT_SHORT from $CURRENT_BRANCH to main\""
 echo "   or"
-echo "   \\"Create PR from $CURRENT_BRANCH to main\\""
+echo "   \"Create PR from $CURRENT_BRANCH to main\""
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -146,7 +159,13 @@ echo ""
 # ---------------------------------------------------------------------------
 GIT_ROOT=$(git rev-parse --show-toplevel)
 
-if [ ! -f "$GIT_ROOT/.archivist" ]; then
+# Accept either config form: legacy flat file or directory form.
+# The old -f check silently bails on migrated repos because -f is false
+# for directories. Don't repeat that mistake.
+_archivist_is_configured() {
+    [ -f "$GIT_ROOT/.archivist" ] || [ -f "$GIT_ROOT/.archivist/config.yaml" ]
+}
+if ! _archivist_is_configured; then
     exit 0
 fi
 
@@ -170,7 +189,7 @@ for FILE in $FILES; do
     fi
 
     sed -i.bak "s/^commit-sha:[[:space:]]*.*/commit-sha: $COMMIT_SHORT/" "$FULL_PATH"
-    sed -i.bak "s/| Commit SHA | \\[fill in after commit\\] |/| Commit SHA | $COMMIT_SHA |/" "$FULL_PATH"
+    sed -i.bak "s/| Commit SHA | \[fill in after commit\] |/| Commit SHA | $COMMIT_SHA |/" "$FULL_PATH"
     rm -f "${FULL_PATH}.bak"
 
     echo "   📋 archivist: SHA backfilled in $(basename $FILE)"

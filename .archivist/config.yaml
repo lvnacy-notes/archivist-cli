@@ -1,5 +1,5 @@
 # archivist project configuration
-apparatus: false
+apparatus: False
 module-type: general
 changelog-output-dir: docs/ARCHIVE
-templater: false
+templater: False
