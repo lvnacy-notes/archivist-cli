@@ -4,11 +4,11 @@ category:
   - changelog
 log-scope: general
 modified: 2026-04-28
-UUID: dad95f3e-4b61-49eb-aae6-3fe861901ca2
+UUID: 57eaacf0-33a5-49b6-be91-029625ff156b
 commit-sha: 
-files-modified: 11
-files-created: 5
-files-archived: 1
+files-modified: 2
+files-created: 0
+files-archived: 0
 tags:
   - archivist-cli
 ---
@@ -21,53 +21,28 @@ tags:
 |-------|-------|
 | Date | 2026-04-28 |
 | Commit SHA | [fill in after commit] |
-| Files Added | 5 |
-| Files Modified | 11 |
-| Files Archived | 1 |
+| Files Added | 0 |
+| Files Modified | 2 |
+| Files Archived | 0 |
 
 ## Changes
 
 ### Files Modified
-- `.github/README.md`: updated with new config system
-- `AGENTS.md`: Updated with new plugin parameters
-- `archivist/cli.py`: new migration command
-- `archivist/commands/changelog/library.py`: renamed methods to public access
-- `archivist/commands/init.py`: new archivist config setup
-- `archivist/utils/config.py`:
-  - new archivist config setup
-  - new changelog plugin support
-
-- `docs/TESTING_SPECIFICATION.md`: updated to track new config coverage
-- `pyproject.toml`:
-  - `pathspec` import
-  - `archivist.data` recognition
-  - version bump
-
-- `tests/unit/test_config.py`: coverage for plugin system and `migrate` command
-- `.archivist/config.yaml` *(moved from `.archivist`)* ⚠️ *rename unverified (cross-directory, name mismatch) — double-check*: [description]
-- `docs/ARCHIVE/CHANGELOG-2026-04-27-28a843a.md` *(renamed from `CHANGELOG-2026-04-27.md`)*:
+- `archivist/commands/hooks/install.py`: patch issue with commit hash backfill on sealed changelogs
+- `docs/ARCHIVE/CHANGELOG-2026-04-28-13ee17a.md` *(renamed from `CHANGELOG-2026-04-28.md`)*:
   - backfilled commit hash from prior commit
 
 ### New Files Created
-- `archivist/commands/migrate.py`: [description]
-- `archivist/data/__init__.py`: [description]
-- `archivist/data/sample-changelog.py`: [description]
-- `docs/ARCHIVE/CHANGELOG-2026-04-28.md`: this changelog
-- `docs/PLUGIN_SYSTEM_FEATURE_CHECKLIST.md`: [description]
+- No new files
 
 ### Files Removed / Archived
-- `docs/TEMPLATER_SUPPORT_PLAN.md`: [description]
+- No files archived
 
 
 <!-- archivist:auto-end -->
 ## Notes
 
-Feat: changelog plugin and new config system
-
-- new feature to extend changelog generation with custom templates
-- new config directory system
-- new `migrate` command to explicitly migrate a project to the new config system
-- updated tests and docs to support new config system
+Patch: fix commit hash backfill bug
 
 ---
 
