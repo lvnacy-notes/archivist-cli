@@ -14,7 +14,7 @@ from pathlib import Path
 from archivist.utils import (
     GitChanges,
     clean_filename,
-    ensure_staged,
+    ensure_staged_under,
     error,
     extract_descriptions,
     extract_user_content,
@@ -376,7 +376,7 @@ def run(args: argparse.Namespace) -> None:
 
     # Ensure edition files are staged before diffing
     if not args.dry_run:
-        ensure_staged(edition_path, git_root)
+        ensure_staged_under(edition_path, git_root)
 
     changes = get_git_changes(
         commit_sha=args.commit_sha,

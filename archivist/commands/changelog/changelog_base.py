@@ -48,6 +48,7 @@ from archivist.utils import (
     GitChanges,
     detect_dir_renames,
     ensure_staged,
+    extract_changelog_title,
     extract_descriptions,
     extract_frontmatter,
     extract_user_content,
@@ -68,6 +69,7 @@ from archivist.utils import (
     prompt_out_of_scope_changes,
     reassign_deletions,
     report_changes,
+    resolve_changelog_title,
     spinner,
     write_changelog,
 )
@@ -109,6 +111,7 @@ class ChangelogContext:
     descriptions: dict[str, str | list[str]]    # preserved from existing changelog
     user_content: str | list[str] | None        # content below sentinel
     changelog_uuid: str
+    custom_title: str | None                    # user-set heading title, None if default
 
     """
     Module-specific data can go here. Use it to pass info from post_changes to
@@ -197,13 +200,10 @@ def run_changelog(
         else None
     )
 
-    # Step 3: Ensure staging
+    # Step 3: Ensure staging — we check, we don't touch.
+    # Auto-staging is gone. If nothing is in the index, that's on you.
     if not args.dry_run:
-        ensure_staged(
-            scope_path or output_dir,
-            git_root,
-            extra_paths
-        )
+        ensure_staged(git_root)
         if scope_path is not None:
             prompt_out_of_scope_changes(scope_path, git_root)
 
@@ -333,6 +333,7 @@ def run_changelog(
     descriptions: dict[str, str | list[str]] = {}
     user_content: str | list[str] | None = None
     changelog_uuid: str | None = None
+    custom_title: str | None = None
 
     if existing:
         progress(f"  🔍 Found existing changelog: {existing.name} — updating in place")
@@ -343,6 +344,7 @@ def run_changelog(
         changelog_uuid: str | None = cast(str, existing_fm.get("UUID") or existing_fm.get("uuid"))
         descriptions = extract_descriptions(existing_text)
         user_content = extract_user_content(existing_text)
+        custom_title = extract_changelog_title(existing_text)
         output_path = existing
     else:
         progress(f"  🆕 No existing changelog found — creating {output_path.name}")
@@ -364,6 +366,7 @@ def run_changelog(
         descriptions = descriptions,
         user_content = user_content,
         changelog_uuid = changelog_uuid,
+        custom_title = custom_title,
     )
 
     # Step 8: Module-specific post-changes analysis
