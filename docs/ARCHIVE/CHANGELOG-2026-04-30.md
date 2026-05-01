@@ -4,16 +4,16 @@ category:
   - changelog
 log-scope: general
 modified: 2026-04-30
-UUID: 45cce4b4-be70-45c2-91e9-71e69e64723a
+UUID: 92eb0c0a-d10a-4145-a39c-c86e80b3b3d9
 commit-sha: 
-files-modified: 7
+files-modified: 6
 files-created: 0
 files-archived: 0
 tags:
   - archivist-cli
 ---
 
-# Quality of Life Updates — 2026-04-30
+# Quality of Life Updates, Part 2 — 2026-04-30
 
 ## Overview
 
@@ -22,19 +22,18 @@ tags:
 | Date | 2026-04-30 |
 | Commit SHA | [fill in after commit] |
 | Files Added | 0 |
-| Files Modified | 7 |
+| Files Modified | 6 |
 | Files Archived | 0 |
 
 ## Changes
 
 ### Files Modified
-- `archivist/commands/changelog/changelog_base.py`: [description]
-- `archivist/commands/changelog/library.py`: [description]
-- `archivist/commands/manifest.py`: [description]
-- `archivist/utils/changelog.py`: [description]
-- `archivist/utils/git.py`: [description]
-- `pyproject.toml`: [description]
-- `docs/ARCHIVE/CHANGELOG-2026-04-29-706b2d9.md` *(renamed from `CHANGELOG-2026-04-29.md`)*: [description]
+- `archivist/commands/changelog/general.py`: [description]
+- `archivist/commands/changelog/publication.py`: [description]
+- `archivist/commands/changelog/story.py`: [description]
+- `archivist/commands/changelog/vault.py`: [description]
+- `tests/integration/test_changelog_commands.py`: [description]
+- `docs/ARCHIVE/CHANGELOG-2026-04-30-ee2058a.md` *(renamed from `CHANGELOG-2026-04-30.md`)*: [description]
 
 ### New Files Created
 - No new files
@@ -46,11 +45,10 @@ tags:
 <!-- archivist:auto-end -->
 ## Notes
 
-patch: quality of life updates
+patch: quality of life updates, part 2
 
-- removed auto-stage functionality; Archivist now respects what is staged and prompts if nothing is staged
-- new title functionality for changelogs: set a title and it is preserved across command iterations
-- patched a bug in `library.py` preventing modified files from being listed in the generated changelog
+- update tests to reflect changes to git management
+- extend title preservation across all changelog modules
 
 ---
 

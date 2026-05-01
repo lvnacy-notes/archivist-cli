@@ -18,12 +18,12 @@ The two most important tests in this entire file:
      reruns exist. If user content gets wiped on rerun, we're destroying
      people's work. This is catastrophic, not a minor regression.
 
-Note on "nothing staged → exits with error": the strategy doc mentions
-this case, but the current implementation of run_changelog() always
-passes output_dir to ensure_staged(), making path non-None. The
-nothing-is-staged exit lives in the else-branch of ensure_staged(),
-which is unreachable from run_changelog(). We test the actual observed
-behavior instead: empty diff produces an empty changelog without crashing.
+Note on "nothing staged → exits with error": ensure_staged() now always
+checks the index and exits with SystemExit(1) if nothing is staged.
+Auto-staging of output_dir and extra_paths has been removed — Archivist
+no longer touches the index on behalf of the user. The empty-diff test
+has been updated to assert the correct new behaviour: SystemExit, not a
+zero-count changelog.
 
 Note on dry-run directory creation: find_changelog_output_dir() calls
 output_dir.mkdir(parents=True, exist_ok=True) unconditionally in step 1
@@ -34,12 +34,12 @@ holds — but the directories do appear. The dry-run tests therefore compare
 file sets only (p.is_file()), not directory entries.
 
 Note on dual-prompt scenarios (--path scope):
-When --path is active, ensure_staged() stages only the scope directory,
-leaving ARCHIVE/ untouched. A committed-then-modified changelog will
-appear in BOTH _get_out_of_scope_unstaged() (because it's outside the
-scope). Tests that probe the save-before-overwrite prompt use an
-iter-based mock that feeds 'n' first (out-of-scope prompt) then 'y'
-(save prompt), matching the actual call order in run_changelog():
+When --path is active, ensure_staged() checks the repo-wide index (not
+scoped to the path — that's ensure_staged_under(), used only by manifest).
+A committed-then-modified changelog will appear in _get_out_of_scope_unstaged()
+(because it's outside the scope). Tests that probe the save-before-overwrite
+prompt use an iter-based mock that feeds 'n' first (out-of-scope prompt)
+then 'y' (save prompt), matching the actual call order in run_changelog():
 Step 3 → prompt_out_of_scope_changes, Step 6 → _prompt_save_before_overwrite.
 """
 
@@ -260,27 +260,24 @@ class TestChangelogGeneral:
             "Either rename detection is broken or the formatter dropped it."
         )
 
-    def test_empty_diff_produces_changelog_with_zero_counters(
+    def test_nothing_staged_exits_with_error(
         self, git_repo, monkeypatch
     ):
         """
-        When nothing is staged, run_changelog() stages output_dir (which is
-        empty/new), gets an empty diff, warns, and writes a zero-count
-        changelog anyway. It should NOT crash or sys.exit. We test the
-        actual observed behavior here — see module docstring for context.
+        When nothing is staged, ensure_staged() must exit with SystemExit(1)
+        and write absolutely nothing. Auto-staging is gone — Archivist no
+        longer touches the index on the user's behalf.
         """
         monkeypatch.chdir(git_repo.path)
-        # Stage nothing — run_general will git-add ARCHIVE/ (empty) and carry on
+        before = {p for p in git_repo.path.rglob("*") if p.is_file()}
 
-        run_general(_cl_args())
+        with pytest.raises(SystemExit) as exc:
+            run_general(_cl_args())
 
-        changelogs = list((git_repo.path / "ARCHIVE").glob("CHANGELOG-*.md"))
-        assert changelogs, "Even an empty diff should produce a changelog file"
+        assert exc.value.code == 1, "Expected exit code 1 when nothing is staged"
 
-        fm = extract_frontmatter(changelogs[0].read_text(encoding="utf-8"))
-        assert fm.get("files-created") == 0
-        assert fm.get("files-modified") == 0
-        assert fm.get("files-archived") == 0
+        after = {p for p in git_repo.path.rglob("*") if p.is_file()}
+        assert before == after, "ensure_staged() bailed but something still got written"
 
     def test_output_dir_is_created_if_it_does_not_exist(
         self, git_repo, monkeypatch

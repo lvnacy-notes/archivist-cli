@@ -16,6 +16,7 @@ user content and descriptions in the existing changelog, if present.
 
 import argparse
 from pathlib import Path
+import re
 
 from archivist.commands.changelog.changelog_base import ChangelogContext, run_changelog
 from archivist.utils import (
@@ -23,6 +24,7 @@ from archivist.utils import (
     get_project_name,
     get_today,
     render_field,
+    resolve_changelog_title,
 )
 
 
@@ -69,7 +71,7 @@ def _build_body(ctx: ChangelogContext) -> str:
 
     return f"""
 
-# Changelog — {today}
+{resolve_changelog_title(ctx, today)}
 
 ## Overview
 
