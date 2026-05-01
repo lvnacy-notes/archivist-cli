@@ -41,52 +41,76 @@ class SubmoduleInfo(TypedDict):
 # -----------------------------------------------------------------------------
 
 
-def ensure_staged(
-    path: Path | None,
-    git_root: Path,
-    extra_paths: list[Path] | None = None,
-) -> None:
+def ensure_staged(git_root: Path) -> None:
     """
-    Ensure files are staged before generating a document.
+    Verify that the user has staged something before we bother doing any work.
 
-    If path is given:
-      - Always run `git add <path>` (idempotent — picks up the changelog
-        itself plus any other in-scope changes on re-runs).
-      - Also stage any extra_paths that exist (e.g. README, .github/).
+    Archivist no longer auto-stages anything — not the output dir, not extra
+    paths, not the changelog file itself. You stage it, we log it. That's the
+    deal. If nothing is in the index, we say so and get out of the way.
 
-    If path is None:
-      - Check if anything is staged in the repo at all.
-      - If nothing is staged, exit with a clear error — the user is
-        responsible for staging when no scope is provided.
-      - extra_paths are not auto-staged in this case; the user owns staging.
-
-    Prints a note when it stages files automatically.
+    Exits with a clear error if the index is empty. Prints a confirmation with
+    the file count if it isn't.
     """
     try:
-        if path is not None:
-            subprocess.run(["git", "add", str(path)], check=True, cwd=git_root)
-            print(f"  📥 Staged: {path}")
-            for ep in (extra_paths or []):
-                if ep.exists():
-                    subprocess.run(["git", "add", str(ep)], check=True, cwd=git_root)
-                    rel = ep.relative_to(git_root) if ep.is_absolute() else ep
-                    print(f"  📥 Staged: {rel}")
-        else:
-            result = subprocess.run(
-                ["git", "diff", "--cached", "--name-only"],
-                capture_output=True, text=True, check=True, cwd=git_root,
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            capture_output=True, text=True, check=True, cwd=git_root,
+        )
+        if not result.stdout.strip():
+            print(
+                "❌  What the fuck am I supposed to log? Stage some files first.",
+                file=sys.stderr,
             )
-            if not result.stdout.strip():
-                print(
-                    "❌  Nothing is staged. Stage your changes before running archivist changelog.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            staged_files = result.stdout.strip().splitlines()
-            print(f"  ✔  Staging check passed — {len(staged_files)} file(s) staged")
+            sys.exit(1)
+        staged_files = result.stdout.strip().splitlines()
+        print(f"  ✔  Staging check passed — {len(staged_files)} file(s) staged")
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"❌  Git error while staging files: {e}")
+        logger.error(f"❌  Git error while checking staged files: {e}")
+        sys.exit(1)
+
+
+def ensure_staged_under(path: Path, git_root: Path) -> None:
+    """
+    Verify that at least one staged file falls under `path`.
+
+    Manifest's scoped equivalent of ensure_staged(). The broader index check
+    isn't enough here — we need to know specifically that the edition directory
+    has staged content, not just that some unrelated file in the repo does.
+
+    `path` can be absolute or relative; it's normalised to a repo-relative
+    prefix before the comparison so git's output lines up correctly.
+
+    Exits if nothing under the scope is staged. Prints a confirmation with
+    the in-scope file count if something is.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            capture_output=True, text=True, check=True, cwd=git_root,
+        )
+        all_staged = result.stdout.strip().splitlines()
+
+        # Normalise path to a repo-relative prefix string so it matches
+        # the format git outputs. Absolute paths get made relative first.
+        scope = path.relative_to(git_root) if path.is_absolute() else path
+        scope_prefix = str(scope)
+
+        in_scope = [f for f in all_staged if f.startswith(scope_prefix)]
+
+        if not in_scope:
+            print(
+                f"❌  Nothing staged under '{scope_prefix}'. "
+                f"Stage your edition files first.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        print(f"  ✔  Staging check passed — {len(in_scope)} file(s) staged under '{scope_prefix}'")
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌  Git error while checking staged files: {e}")
         sys.exit(1)
 
 

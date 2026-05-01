@@ -98,6 +98,7 @@ from archivist.utils import (
     rename_display_path,
     rename_suspicion,
     render_field,
+    resolve_changelog_title,
 )
 
 
@@ -865,7 +866,12 @@ def build_body(ctx: ChangelogContext) -> str:
                     claimed.add(entry[-1])
 
     other_added = [f for f in ctx.processed_changes["A"] if f not in claimed]
-    other_updated = [f for f in ctx.processed_changes["M"] if f not in claimed]
+    # ctx.modified = changes["M"] + rename new-paths promoted by the base runner.
+    # processed_changes["M"] is the raw M list only — renames that were promoted
+    # into ctx.modified are absent from it entirely, so any unclaimed rename
+    # destination would vanish from the output without a trace. Use ctx.modified
+    # here so the full post-rename-processing picture is reflected.
+    other_updated = [f for f in ctx.modified if f not in claimed]
     other_removed = [f for f in ctx.processed_changes["D"] if f not in claimed]
 
     works = lib_stats["works"]
@@ -887,7 +893,7 @@ def build_body(ctx: ChangelogContext) -> str:
 
     return f"""
 
-# Changelog — {today}
+{resolve_changelog_title(ctx, today)}
 
 ## Overview
 

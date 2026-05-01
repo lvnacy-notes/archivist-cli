@@ -88,6 +88,67 @@ def extract_user_content(existing_content: str) -> str | None:
     return existing_content.split(ARCHIVIST_AUTO_END, 1)[1]
 
 
+def extract_changelog_title(existing_content: str) -> str | None:
+    """
+    Pull the custom title out of an existing changelog, if the user bothered
+    to set one.
+
+    Scans for the first `# ...` heading in the auto-generated block (before
+    the archivist:auto-end sentinel, where we own the content). If the heading
+    is the boring default — "Changelog" — we return None and let the builder
+    regenerate it as usual. If the user renamed it to something actually
+    descriptive, we return just the title text so it can survive the next
+    rewrite.
+
+    The heading is expected to look like:
+        # Some Title — YYYY-MM-DD
+
+    We strip the date suffix (everything from " — " onward) so the caller gets
+    clean title text it can re-attach a fresh date to. If the heading has no
+    date suffix, the whole thing after "# " is returned as-is.
+
+    Returns None if no custom title is found or if the title is the default.
+    """
+    # Only look in the auto-generated section — don't go spelunking past the sentinel
+    auto_block = (
+        existing_content.split(ARCHIVIST_AUTO_END, 1)[0]
+        if ARCHIVIST_AUTO_END in existing_content
+        else existing_content
+    )
+
+    for line in auto_block.splitlines():
+        m = re.match(r"^#\s+(.+)$", line)
+        if not m:
+            continue
+        heading = m.group(1).strip()
+        # Strip the date suffix if present (e.g. " — 2025-04-30")
+        title = re.split(r"\s+[—–-]\s+\d{4}-\d{2}-\d{2}", heading)[0].strip()
+        # The default is boring. Don't preserve it — let the builder regenerate it.
+        if title.lower() == "changelog":
+            return None
+        return title
+
+    return None
+
+
+def resolve_changelog_title(ctx: "ChangelogContext", date: str) -> str:  # type: ignore[name-defined]
+    """
+    Return the heading line for a changelog body.
+
+    Prefers ctx.custom_title (preserved from the existing file on re-runs)
+    over the default "Changelog". Either way, the current date gets appended.
+
+        # My Descriptive Title — 2025-04-30
+        # Changelog — 2025-04-30   ← what you get if you can't be bothered
+
+    Every build_body implementation should call this instead of hardcoding
+    the heading string, or any title the user sets will get nuked on the next
+    run. Don't be that asshole.
+    """
+    title = ctx.custom_title or "Changelog"
+    return f"# {title} — {date}"
+
+
 def find_active_changelog(output_dir: Path) -> Path | None:
     """Return the most recent unsealed (pre-commit) changelog in output_dir, or None.
 

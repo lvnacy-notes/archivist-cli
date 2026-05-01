@@ -30,6 +30,7 @@ from archivist.utils import (
     init_db,
     rename_display_path,
     render_field,
+    resolve_changelog_title,
 )
 
 
@@ -215,7 +216,7 @@ def _build_body(ctx: ChangelogContext) -> str:
 
     return f"""
 
-# Changelog — {today}
+{ resolve_changelog_title(ctx, today) }
 
 ## Overview
 

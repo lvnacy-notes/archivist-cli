@@ -25,6 +25,7 @@ from archivist.utils import (
     get_submodule_status,
     get_today,
     render_field,
+    resolve_changelog_title,
 )
 
 
@@ -153,7 +154,7 @@ def _build_body(ctx: ChangelogContext) -> str:
 
     return f"""
 
-# Changelog — {today} (Vault)
+{ resolve_changelog_title(ctx, today) }
 
 ## Overview
 
