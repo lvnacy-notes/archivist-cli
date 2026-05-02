@@ -203,6 +203,13 @@ def write_archivist_config(git_root: Path, config: dict) -> None:
                 # format is unambiguous. A bare `ignores:` with no entries
                 # parses as null in YAML — not what we want.
                 lines.append("  []")
+        elif isinstance(value, dict):
+            # Nested mapping — write as a YAML block mapping.
+            # Currently used for the `directories` block on library modules.
+            # f"{key}: {value}" would write Python repr, which is not YAML.
+            lines.append(f"{key}:")
+            for sub_key, sub_val in value.items():
+                lines.append(f"  {sub_key}: {sub_val}")
         else:
             lines.append(f"{key}: {value}")
 
