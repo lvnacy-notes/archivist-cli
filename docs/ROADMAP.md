@@ -8,11 +8,48 @@ A living document tracking intended future direction across two areas: feature d
 
 ### Centralized Cross-Project Database
 
-Currently, `archive.db` is scoped per-project, living in each module's `ARCHIVE/` directory. The long-term vision is a single machine-level database that every Archivist-managed repo feeds into — aggregating commit hashes and changelog frontmatter data across the entire Apparatus.
+Currently, `archive.db` is scoped per-project, living in each module’s `ARCHIVE/` directory. The long-term vision is a single machine-level database that every Archivist-managed repo feeds into — aggregating commit hashes and changelog frontmatter data across the entire Apparatus.
 
 Primary use case is day-to-day querying: activity across all projects, changelog history, commit timelines. But the architecture should be designed with behavioral use cases in mind from the start, so it can serve as the foundation for cross-project orchestration down the line (see below) without requiring a structural rewrite.
 
-Registration, storage location, and schema are not yet specced. Return here to brainstorm when the per-project DB patterns have stabilized and the query use cases are better understood.
+#### Technology Decision: SQLite
+
+**The answer is SQLite. No server, no daemon, no container — just a file at a well-defined machine-level path (e.g. `~/.archivist/archivist.db`).**
+
+This decision was reached deliberately, after evaluating alternatives including containerized database servers (PostgreSQL in Docker) and Elasticsearch. The reasoning:
+
+**Why not a containerized server?**
+The appeal of Docker is keeping tooling off the local machine, but for a developer tool that runs on every commit via the post-commit hook, a containerized database introduces real costs: the daemon must be running constantly, cold starts add latency on the hot path, and volume mounts and networking add operational surface area. That trades one form of environment management for another that is meaningfully heavier. SQLite has no daemon and no server process — it is the file.
+
+**Why not Elasticsearch?**
+Elasticsearch is a distributed search engine built for full-text relevance ranking over large document corpora — millions of documents, complex query DSL, tunable scoring. The Archivist use case is structured queries over frontmatter metadata and commit history: activity timelines, changelog lookups, cross-project filtering. That is a SQL `WHERE` clause, not a search problem. Elastic would impose substantial operational overhead before you ever reached a scale that justified it.
+
+**Why SQLite is sufficient at every stage?**
+All queryable content is frontmatter data — structured key-value pairs that map cleanly to columns and rows. SQLite’s home turf. If full-text search over note content ever becomes a requirement, SQLite’s built-in FTS5 extension covers it without an external dependency. If multi-machine access or concurrent writes ever become a requirement, migration to PostgreSQL is straightforward because the schema is already relational — nothing about choosing SQLite now forecloses that path later.
+
+**The upgrade path, if it’s ever needed:**
+
+```
+SQLite (per-project, current)
+  → SQLite (machine-level, centralized)       ← target
+    → PostgreSQL (if multi-machine or concurrent writes demand it)
+```
+
+Elasticsearch is not on this path. It solves a different class of problem.
+
+#### Schema Strategy
+
+Frontmatter schemas are maintained explicitly and kept in sync with the per-class note templates. This is not a schema-less or EAV design — frontmatter keys are known, typed, and stable per class, and that structure is reflected directly in the database schema.
+
+The reason people reach for JSON blobs or entity-attribute-value patterns is usually that their data shape is unknown or shifts too often to manage migrations. Neither applies here: note classes and their template fields are defined and controlled by Archivist itself. Making them explicit in SQLite adds precision and query clarity at negligible cost. SQLite migrations are plain SQL — no ORM ceremony.
+
+Schemas are cheap. Maintain them.
+
+#### Open Questions
+
+Registration, storage location, and full schema are not yet specced. Return here to brainstorm when the per-project DB patterns have stabilized and the query use cases are better understood. The note in the original roadmap stands: design should follow stabilization, not precede it.
+
+-----
 
 ### Multi-Vault / Submodule Orchestration
 
@@ -128,47 +165,68 @@ ruff check --fix .   # lint + auto-fix where possible
 
 ---
 
-### Phase 2 — Test Scaffolding (After Active Feature Work Settles)
+### Phase 2 — Test Suite ✅
 
-**Goal:** Establish a test structure before the codebase grows further. Catching regressions in frontmatter manipulation and the archive DB is the primary payoff here.
+**Goal:** Catch regressions in frontmatter manipulation and the archive DB before they eat someone's vault alive.
 
-### Install `pytest`
+**Shipped.** This is not a scaffold. The suite is complete, covering every load-bearing behavior in the codebase. The authoritative reference for what's covered, what's deliberately skipped, and how to evolve the suite without tearing holes in the net is `TESTING_SPECIFICATION.md`.
 
-```bash
-$(pyenv which pip) install pytest
-```
-
-Add to `pyproject.toml`:
-
-```toml
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-```
-
-### Recommended test structure
+### Structure
 
 ```
 tests/
-├── conftest.py           # shared fixtures (tmp git repo, sample vault files)
-├── test_frontmatter.py   # frontmatter add / remove / rename / apply-template
-├── test_manifest.py      # manifest generation and template field ordering
-├── test_changelog.py     # changelog subcommands
-└── test_archive_db.py    # SQLite SHA tracking, claim logic
+├── conftest.py                      # shared fixtures: git_repo, md_file, args factory
+├── unit/
+│   ├── test_changelog_helpers.py    # extract_descriptions, format_file_list, UUID generation
+│   ├── test_config.py               # config read/write, module-type resolution, plugin discovery
+│   ├── test_frontmatter.py          # every frontmatter helper — the highest-stakes unit module
+│   ├── test_rename_helpers.py       # all three rename inference passes, pipeline integration
+│   └── test_templater.py            # mask/restore cycle, expression evaluator, TemplaterContext
+└── integration/
+    ├── test_changelog_commands.py   # all five changelog subcommands, dry-run, sentinel survival
+    ├── test_frontmatter_commands.py # add / remove / rename / apply-template against real files
+    └── test_seal.py                 # seal mechanics, DB transitions, idempotency
+```
+
+Run unit tests only (fast, no git required):
+
+```bash
+pytest -m "not integration" -v
+```
+
+Run everything:
+
+```bash
+pytest -v
 ```
 
 ### Strategy: integration over unit tests
 
-This codebase is tightly coupled to the filesystem and git subprocess calls. Pure unit tests with heavy mocking will be brittle and won't catch real bugs. The better approach:
+The codebase is tightly coupled to the filesystem and git subprocess calls. Pure unit tests with heavy mocking would be brittle and wouldn't catch real bugs. The suite:
 
-- Use `pytest`'s built-in `tmp_path` fixture to get a throwaway directory per test
-- `git init` programmatically inside `tmp_path` to create a realistic environment
-- Run actual `archivist` commands against it and assert on file contents and git state
+- Uses `pytest`'s `tmp_path` fixture for a throwaway directory per test
+- `git init`s programmatically via the `git_repo` fixture to create a realistic environment
+- Runs actual `archivist` operations against real files and asserts on file contents and git state
+- Tags real-filesystem tests with the `integration` marker so the fast subset is always runnable in isolation
 
-### What to test first
+### What got covered
 
-1. **Frontmatter manipulation** — most self-contained, highest-stakes. An add/remove/rename that corrupts a note is a bad day.
-2. **Archive DB transactions** — the SHA claim logic in `changelog publication` is the kind of thing that fails silently and is hell to debug later.
-3. **Git hook behavior** — hardest to test; defer until the others are covered.
+1. **Frontmatter manipulation** — `add`, `remove`, `rename`, `apply-template`, including Templater mask/restore across all four commands. An add/remove/rename that corrupts a note is a bad day and a worse conversation.
+2. **Archive DB transactions** — SHA claim logic in `changelog publication`, UUID→SHA transition at seal time. The kind of thing that fails silently and surfaces three weeks later as a mystery.
+3. **Rename detection** — all three inference passes (`detect_dir_renames`, `infer_undetected_renames`, `infer_renames_by_content`) exercised individually and composed end-to-end, including 50-level-deep path chains to surface any O(n²) surprises.
+4. **The dry-run contract** — every command that touches files has a test that compares the full file set before and after. A dry run that writes is just called a run.
+5. **The sentinel boundary** — every changelog subcommand has a two-run test that injects user content below `<!-- archivist:auto-end -->` and verifies it survives regeneration untouched. Cross this line and you're destroying someone's work.
+6. **The UUID / seal lifecycle** — UUID stability across reruns, UUID→short SHA transition at seal, `changelogs` table population, idempotent re-sealing.
+
+Git hook behavior remains the one deferred area — hardest to test in CI, lowest marginal value until everything else is green everywhere.
+
+### Dependency
+
+```
+pytest    # still the only new dependency
+```
+
+No `pytest-mock`. No `factory_boy`. No `hypothesis`. `unittest.mock` is stdlib and covers whatever mocking is needed. If git isn't on PATH, integration tests fail loudly. That is correct behavior.
 
 ---
 
@@ -269,6 +327,6 @@ $(pyenv which pip) install -e ".[dev]"
 | Phase | What | When |
 |---|---|---|
 | 1 | `ruff` linting + formatting | Now |
-| 2 | `pytest` scaffolding + integration tests | After active feature work settles |
+| 2 | `pytest` test suite — unit + integration | ✅ Shipped |
 | 3 | GitHub Actions CI (lint, typecheck, test matrix) | After Phase 2 |
 | — | `pyyaml` version floor, dev deps declared | Ongoing / now |
