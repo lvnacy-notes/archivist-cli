@@ -243,39 +243,43 @@ def load_changelog_plugin(plugin_path: Path) -> types.ModuleType:
     If your plugin blows up mid-execution, you get the traceback. That's your
     fault, not Archivist's.
     """
+    _MODULE_NAME = "archivist_changelog_plugin"
     try:
-        spec = importlib.util.spec_from_file_location("archivist_changelog_plugin", plugin_path)
+        spec = importlib.util.spec_from_file_location(_MODULE_NAME, plugin_path)
         if spec is None or spec.loader is None:
             print(
-                f"❌  Couldn't load changelog plugin at {plugin_path} — "
+                f"❌  Couldn't load changelog plugin at { plugin_path } — "
                 "importlib returned no spec. Is it actually a Python file?",
-                file=sys.stderr,
+                file = sys.stderr,
             )
             sys.exit(1)
 
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        sys.modules[_MODULE_NAME] = module  # register BEFORE exec — this is not optional
+        spec.loader.exec_module(module)
 
     except SyntaxError as e:
+        sys.modules.pop(_MODULE_NAME, None)  # don't leave poisoned None in the cache
         print(
-            f"❌  Syntax error in changelog plugin {plugin_path}:\n"
+            f"❌  Syntax error in changelog plugin { plugin_path }:\n"
             f"    {e}",
-            file=sys.stderr,
+            file = sys.stderr,
         )
         sys.exit(1)
     except Exception as e:
+        sys.modules.pop(_MODULE_NAME, None)  # same — clean up your shit
         print(
-            f"❌  Failed to load changelog plugin {plugin_path}:\n"
+            f"❌  Failed to load changelog plugin { plugin_path }:\n"
             f"    {e}",
-            file=sys.stderr,
+            file = sys.stderr,
         )
         sys.exit(1)
 
     if not callable(getattr(module, "run", None)):
         print(
-            f"❌  Changelog plugin at {plugin_path} has no callable `run` function.\n"
+            f"❌  Changelog plugin at { plugin_path } has no callable `run` function.\n"
             "    That's the entire contract. One function. Go fix it.",
-            file=sys.stderr,
+            file = sys.stderr,
         )
         sys.exit(1)
 

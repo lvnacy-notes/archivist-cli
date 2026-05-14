@@ -3,47 +3,46 @@ class: archive
 category:
   - changelog
 log-scope: general
-modified: 2026-05-01
-UUID: 8891b364-21fd-442a-b123-61470a593f97
+modified: 2026-05-14
+UUID: 1f79d34d-a8eb-4a8c-962f-64fc433e148b
 commit-sha: 
-files-modified: 2
-files-created: 3
+files-modified: 3
+files-created: 0
 files-archived: 0
 tags:
   - archivist-cli
 ---
 
-# Centralized Database Development Documentation — 2026-05-01
+# Centralized DB Docs Update: Phase 1.5 Addition — 2026-05-14
 
 ## Overview
 
 | Field | Value |
 |-------|-------|
-| Date | 2026-05-01 |
+| Date | 2026-05-14 |
 | Commit SHA | [fill in after commit] |
-| Files Added | 3 |
-| Files Modified | 2 |
+| Files Added | 0 |
+| Files Modified | 3 |
 | Files Archived | 0 |
 
 ## Changes
 
 ### Files Modified
-- `docs/ROADMAP.md`: updated with new details around centralized db feature development
-- `docs/ARCHIVE/CHANGELOG-2026-04-30-09ada7d.md` *(renamed from `CHANGELOG-2026-04-30.md`)*: backfilled commit hash from prior commit
-
-### New Files Created
 - `docs/CENTRALIZED_DATABASE_IMPLEMENTATION.md`: [description]
 - `docs/CENTRALIZED_DATABASE_SPEC.md`: [description]
 - `docs/CENTRALIZED_DATABASE_TESTING_SPECIFICATION.md`: [description]
 
+### New Files Created
+- No new files
+
 ### Files Removed / Archived
 - No files archived
 
-docs: implementation details for central db feature
 
 <!-- archivist:auto-end -->
 ## Notes
 
+docs: added phase 1.5 to centralized database feature implementation
 
 ---
 
