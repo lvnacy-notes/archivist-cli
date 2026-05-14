@@ -2,8 +2,9 @@
 
 > Same net. More floor space. Don't fuck it up.
 
-**Companion to:** `TESTING_SPECIFICATION.md` and `SPEC-centralized-db.md`  
-**Status:** Pending implementation — tests are added phase by phase as each implementation phase completes
+**Companion to:** `TESTING_SPECIFICATION.md`
+**Related Docs:** `CENTRALIZED_DATABASE_SPEC.md` and `CENTRALIZED_DATABASE_IMPLEMENTATION.md`  
+**Status:** Phase 1 In Progress — tests are added phase by phase as each implementation phase completes
 
 ---
 
@@ -26,16 +27,19 @@ tests/
 ├── conftest.py                          # ← extend with DB fixtures (see §Fixtures)
 ├── unit/
 │   ├── test_changelog_helpers.py        # ✅ complete — no changes needed
-│   ├── test_config.py                   # ← extend: registration config helpers (Phase 1)
+│   ├── test_config.py                   # ← extend: registration config helpers (Phase 1 + 1.5)
 │   ├── test_frontmatter.py              # ✅ complete — no changes needed
 │   ├── test_rename_helpers.py           # ✅ complete — no changes needed
 │   ├── test_templater.py                # ✅ complete — no changes needed
-│   └── test_registry.py                 # ← new file (Phase 1)
+│   └── test_registry.py                 # ← new file (Phase 1 + 1.5)
 └── integration/
     ├── test_changelog_commands.py       # ✅ complete — no changes needed
     ├── test_frontmatter_commands.py     # ✅ complete — no changes needed
-    ├── test_seal.py                     # ✅ complete — no changes needed
-    ├── test_registration.py             # ← new file (Phase 1)
+    ├── test_seal.py                     # ← extend: UUID-based module_id lookup (Phase 1.5)
+    ├── test_registration.py             # ← new file (Phase 1 + 1.5)
+    ├── test_add_command.py              # ← new file (Phase 1.5)
+    ├── test_deinit_command.py           # ← new file (Phase 1.5)
+    ├── test_pre_commit_sync.py          # ← new file (Phase 1.5)
     ├── test_works_add.py                # ← new file (Phase 2)
     ├── test_changelog_harvesting.py     # ← new file (Phase 3)
     └── test_works_pipeline.py           # ← new file (Phase 4)
@@ -55,6 +59,7 @@ from pathlib import Path
 import pytest
 
 from archivist.utils import (
+    add_module_to_bay,
     init_apparatus_db,
     init_registry_db,
     register_apparatus,
@@ -91,37 +96,36 @@ def registered_library(tmp_path, registry_db, apparatus_db, git_repo) -> dict:
 
     Use this fixture for any test that exercises the full registration + works pipeline.
     """
+    conn = sqlite3.connect(registry_db)
     apparatus_id = register_apparatus(
-        registry_db,
         name="writing",
-        db_path=str(apparatus_db),
+        conn=conn,
+        db_path=apparatus_db,
     )
     module_id = register_module(
-        registry_db,
         apparatus_id=apparatus_id,
         name="cosmic-horror",
         module_type="library",
         path=str(git_repo.path),
         library_tag="cosmic-horror",
+        uuid="550e8400-e29b-41d4-a716-446655440000",
+        conn=conn,
     )
+    conn.close()
 
     # Write config so the module recognizes itself
     config_dir = git_repo.path / ".archivist"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.yaml").write_text(
+        "uuid: 550e8400-e29b-41d4-a716-446655440000\n"
         "module-type: library\n"
         "apparatus: writing\n"
         "library-tag: cosmic-horror\n"
-        "directories:\n"
-        "  works: works/\n"
-        "  authors: authors/\n"
-        "  publications: publications/\n",
+        "works-dir: works/\n",
         encoding="utf-8",
     )
 
     (git_repo.path / "works").mkdir(exist_ok=True)
-    (git_repo.path / "authors").mkdir(exist_ok=True)
-    (git_repo.path / "publications").mkdir(exist_ok=True)
 
     return {
         "registry_db": registry_db,
@@ -129,6 +133,92 @@ def registered_library(tmp_path, registry_db, apparatus_db, git_repo) -> dict:
         "module_path": git_repo.path,
         "module_id": module_id,
     }
+
+
+@pytest.fixture
+def superproject_repo(tmp_path, registry_db) -> dict:
+    """
+    Create a git repo in tmp_path/superproject and register it as a vault
+    module in registry_db. Returns a dict with keys: path, module_id.
+
+    Used for archivist add/deinit tests. The vault module is pre-registered so
+    the commands under test can find it by path and establish module_bays rows.
+    """
+    import subprocess
+    repo_path = tmp_path / "superproject"
+    repo_path.mkdir()
+    subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"],
+        cwd=repo_path, check=True, capture_output=True,
+    )
+
+    conn = sqlite3.connect(registry_db)
+    apparatus_id = register_apparatus(
+        name="writing",
+        conn=conn,
+        db_path=tmp_path / "writing.db",
+    )
+    module_id = register_module(
+        apparatus_id=apparatus_id,
+        name="fiction-vault",
+        module_type="vault",
+        path=str(repo_path),
+        uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        conn=conn,
+    )
+    conn.close()
+
+    config_dir = repo_path / ".archivist"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        "uuid: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\n"
+        "module-type: vault\n"
+        "apparatus: writing\n",
+        encoding="utf-8",
+    )
+
+    return {"path": repo_path, "module_id": module_id}
+
+
+@pytest.fixture
+def contained_module_repo(tmp_path, superproject_repo) -> Path:
+    """
+    Create a bare git repo in tmp_path/contained-module.
+    Does NOT execute git submodule add — that is the command under test.
+    Returns the module working tree path.
+
+    Pre-seeds a minimal .archivist/config.yaml with a UUID so UUID resolution
+    tests can exercise the 'config present, not yet registered' code path.
+    """
+    import subprocess
+    module_path = tmp_path / "contained-module"
+    module_path.mkdir()
+    subprocess.run(["git", "init"], cwd=module_path, check=True, capture_output=True)
+
+    config_dir = module_path / ".archivist"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        "uuid: 11111111-2222-3333-4444-555555555555\n"
+        "module-type: library\n",
+        encoding="utf-8",
+    )
+
+    return module_path
+
+
+@pytest.fixture
+def archivist_config(tmp_path):
+    """
+    Factory fixture. Call with keyword args matching ConfigSchema fields to
+    write a minimal .archivist/config.yaml. Returns the config path.
+    Used to pre-seed config state without running archivist init.
+
+        config_path = archivist_config(tmp_path,
+            uuid="...", module_type="library", apparatus="writing",
+            vaults=["my-vault"])
+    """
+    ...
 ```
 
 ---
@@ -144,7 +234,7 @@ New file. Pure unit tests against the registry DB helpers. No git, no git_repo f
 | Case | What to assert |
 |:-----|:---------------|
 | Creates the file at the given path | File exists after call |
-| Creates all three tables | `apparatuses`, `vaults`, `modules` all present in schema |
+| Creates all tables | `apparatuses`, `modules`, `module_bays` all present in schema |
 | Safe to call twice | Second call does not raise, tables not duplicated |
 | Returns an open connection | Return value is a `sqlite3.Connection` |
 
@@ -158,15 +248,6 @@ New file. Pure unit tests against the registry DB helpers. No git, no git_repo f
 | `db_path` is stored verbatim | Round-trips correctly |
 | Duplicate `name` raises | `UNIQUE` constraint violation |
 
-#### `register_vault`
-
-| Case | What to assert |
-|:-----|:---------------|
-| Inserts a row | `SELECT COUNT(*)` returns 1 |
-| Returns the new `id` | Matches DB |
-| FK to `apparatus_id` stored | Round-trips correctly |
-| `vault_id` is nullable on `modules` | A module without a vault does not violate schema |
-
 #### `register_module`
 
 | Case | What to assert |
@@ -176,14 +257,24 @@ New file. Pure unit tests against the registry DB helpers. No git, no git_repo f
 | All module types accepted | `library`, `story`, `publication`, `vault`, `general`, `custom` all insert cleanly |
 | `library_tag` stored for library modules | Round-trips correctly |
 | `library_tag` nullable for non-library modules | NULL stored without error |
-| `vault_id` nullable | Module without vault inserts cleanly |
+| `uuid` stored and unique | Round-trips correctly; duplicate raises `UNIQUE` constraint |
+| `decimated_at` defaults to NULL | New module is active |
+| Module with no `module_bays` row is valid | Not having a container does not violate schema |
+
+#### `add_module_to_bay`
+
+| Case | What to assert |
+|:-----|:---------------|
+| Inserts `module_bays` row | Row present with correct `container_id` and `contained_id` |
+| Calling twice with same pair is safe | `INSERT OR IGNORE` — no error, no duplicate |
+| `container_id` and `contained_id` must reference valid `modules` rows | FK violation if either is invalid |
 
 #### `get_apparatus_db_path`
 
 | Case | What to assert |
 |:-----|:---------------|
-| Returns correct path for registered apparatus | Matches what was registered |
-| Returns `None` for unknown apparatus name | Does not raise |
+| Returns a Path derived from apparatus name | Lowercased, hyphenated, under `~/.archivist/` equivalent |
+| Deterministic | Same name always returns same path |
 
 #### `get_module_by_path`
 
@@ -200,7 +291,8 @@ Add to the existing file. These test the new config fields introduced by registr
 
 | Function | Cases to add |
 |:---------|:-------------|
-| `write_archivist_config` / `read_archivist_config` round-trip | `apparatus` field; `vault` field; `library-tag` field; `directories` block with all three subkeys; `directories` with overridden `works` dir name; partial `directories` block |
+| `write_archivist_config` / `read_archivist_config` round-trip | `apparatus` field; `vaults` list (single entry); `vaults` list (multiple entries); `library-tag` field; `works-dir` field with default value; `works-dir` field with overridden value |
+| `write_archivist_config` with `vault` singular key | Field is not written — `vaults` list is the only supported form |
 | `get_module_type` | Still returns correct value when new registration fields are present alongside it — no regression |
 
 ---
@@ -228,9 +320,11 @@ New file. Tests the full `archivist init` registration flow against real filesys
 | `library_tag` absent from DB for non-library modules | NULL in DB |
 | `.archivist/config.yaml` updated with `apparatus` field | `read_archivist_config` returns it |
 | `.archivist/config.yaml` updated with `library-tag` for library modules | Present in config |
-| `directories` block written to config for library modules | All three subkeys present |
-| Non-library modules do not get `directories` block | Absent from config |
+| `works-dir` field written to config for library modules | Present in config with correct value |
+| Non-library modules do not get `works-dir` field | Absent from config |
 | Re-registering the same path does not duplicate DB rows | `SELECT COUNT(*)` is still 1 |
+| `module_bays` row inserted when vault containment confirmed | Row present with correct `container_id` and `contained_id` |
+| No `module_bays` row inserted when no vault containment | Table count unchanged |
 
 #### `TestFreshMachine`
 
@@ -239,6 +333,194 @@ New file. Tests the full `archivist init` registration flow against real filesys
 | `~/.archivist/` equivalent (`tmp_path`) created if absent | Directory exists after registration |
 | `registry.db` created if absent | File exists after registration |
 | First registration on a fresh DB succeeds | No errors, all rows present |
+
+---
+
+## Phase 1.5 — Config as Authoritative + Submodule Lifecycle
+
+Depends on Phase 1 tests passing cleanly. Do not create any of these files until Phase 1 is green.
+
+### Unit: `test_registry.py` Extensions
+
+Add to the existing file.
+
+#### `get_module_by_uuid`
+
+| Case | What to assert |
+|:-----|:---------------|
+| Returns record for known active UUID | `module_type`, `path`, `decimated_at` all correct |
+| Returns record for known decimated UUID | `decimated_at` is set; record still returned |
+| Returns `None` for unknown UUID | Does not raise |
+| Case-sensitive match | UUID with wrong case returns `None` |
+
+#### `is_module_registered`
+
+| Case | What to assert |
+|:-----|:---------------|
+| Returns `True` when UUID matches registry row | UUID path takes priority |
+| Returns `True` via path fallback when no UUID in config | Legacy module without UUID still found |
+| Returns `False` when `registry.db` does not exist | Does not raise; no file created |
+| Returns `False` for unknown module | Neither UUID nor path matches anything |
+
+#### Tombstone mechanics
+
+| Case | What to assert |
+|:-----|:---------------|
+| Last `module_bays` row as `contained_id` removed → `decimated_at` stamped | Date is today's ISO date |
+| Other `module_bays` rows remain → `decimated_at` not set | `modules` row untouched |
+| Module with no `module_bays` rows (standalone) explicitly deregistered → `decimated_at` stamped | Direct Apparatus removal triggers decimation |
+| Decimated `modules` row is never deleted | Row still queryable after decimation |
+| `work_libraries` rows with decimated `module_id` remain valid | Soft FK intact; rows present |
+| `changelogs` rows with decimated `module_id` remain valid | Soft FK intact; rows present |
+
+#### Reactivation mechanics
+
+| Case | What to assert |
+|:-----|:---------------|
+| `decimated_at` cleared on reactivation | NULL in DB |
+| `path` updated to current machine path | New path stored |
+| `module_bays` row added | Association present |
+| Historical `work_libraries` and `changelogs` rows intact | Counts and values unchanged |
+| Reactivating an already-active module is idempotent | No error; no duplicate rows |
+
+---
+
+### Unit: `test_config.py` Extensions (Phase 1.5)
+
+Add to the existing file alongside the Phase 1 additions.
+
+| Function | Cases to add |
+|:---------|:-------------|
+| `write_archivist_config` / `read_archivist_config` round-trip | `uuid` field written as first field; `uuid` round-trips verbatim |
+| `generate_module_uuid` | Returns a valid UUID4 string; two calls return different values |
+| `write_archivist_config` with no `uuid` | Does not raise; existing configs without uuid remain valid |
+
+---
+
+### Integration: `test_registration.py` Extensions (Phase 1.5)
+
+Add to the existing file.
+
+#### `TestUUIDResolution`
+
+| Test | What to assert |
+|:-----|:---------------|
+| Fresh registration generates UUID and writes to config | `uuid` present in written config |
+| UUID written as first field in config | First non-comment line is `uuid:` |
+| Reconfiguring active module: existing UUID preserved | UUID unchanged in config and DB |
+| Reconfiguring decimated module: `decimated_at` cleared | NULL in DB after init |
+| Config with UUID not in registry: fresh registration, UUID preserved | New `modules` row inserted using existing UUID |
+
+#### `TestMultiVaultAssociation`
+
+| Test | What to assert |
+|:-----|:---------------|
+| Single vault association written to `vaults:` list | List with one entry, not a scalar |
+| Multiple vault associations written correctly | All names present in `vaults:` list |
+| All `module_bays` rows inserted for each vault | Row count matches vault count |
+
+---
+
+### Integration: `test_add_command.py`
+
+New file. Uses `superproject_repo` and `contained_module_repo` fixtures. Monkeypatches `input()` for interactive flow. Tagged `integration`.
+
+#### `TestGitScaffold`
+
+Git submodule execution is not active in this phase. These tests verify that the scaffolded git command is built correctly and printed but never executed.
+
+| Test | What to assert |
+|:-----|:---------------|
+| Scaffolded git command printed to stdout | Output contains `git submodule add` and the provided url and path |
+| Git subprocess is never called | `subprocess.run` / `subprocess.check_output` not invoked with a git submodule add command |
+| Command proceeds to registry work after scaffold step | `modules` row inserted regardless of git scaffold |
+
+#### `TestRegistrationFlow`
+
+| Test | What to assert |
+|:-----|:---------------|
+| Repo with no config: full registration runs; config written with `uuid` | Config exists; `uuid` present |
+| Repo with config and UUID not in registry: registration uses config as defaults | New `modules` row inserted; UUID preserved |
+| Repo with decimated UUID: reactivation path; `decimated_at` cleared | `modules` row `decimated_at` is NULL; `module_bays` row added |
+| Repo with active UUID already registered: `module_bays` row added if absent | No duplicate `modules` row |
+| Vault context pre-populated from superproject | Superproject vault module offered as default container |
+| Hooks installed in target module | Hook files present in module `.git/hooks/` |
+
+#### `TestDryRun`
+
+| Test | What to assert |
+|:-----|:---------------|
+| `--dry-run`: scaffolded git command printed but not executed | No git subprocess called |
+| `--dry-run`: no config written | `.archivist/config.yaml` absent or unchanged |
+| `--dry-run`: no registry rows inserted | All table counts unchanged |
+
+---
+
+### Integration: `test_deinit_command.py`
+
+New file. Uses `superproject_repo` and `registered_library` fixtures. Tagged `integration`.
+
+#### `TestGitScaffold`
+
+Git submodule execution is not active in this phase. These tests verify that the scaffolded git command is built correctly and printed but never executed.
+
+| Test | What to assert |
+|:-----|:---------------|
+| Scaffolded git command printed to stdout | Output contains `git submodule deinit` and the provided path |
+| Superproject check runs: result noted in output | Output indicates whether a superproject was detected |
+| Git subprocess is never called | `subprocess.run` / `subprocess.check_output` not invoked with a git submodule deinit command |
+
+#### `TestRegistryCascade`
+
+| Test | What to assert |
+|:-----|:---------------|
+| Module in multiple vaults: only the relevant `module_bays` row removed | Other bay associations intact |
+| Module in one vault (last containment): `module_bays` row removed; `decimated_at` stamped | Row gone; date set |
+| Standalone module (no `module_bays` rows): explicit deregistration stamps `decimated_at` | Date set on direct removal |
+| Module not in registry: warns clearly; exits without registry error | Warning printed; no exception |
+| `work_libraries` and `changelogs` rows intact after decimation | Historical data unaffected |
+
+#### `TestConfirmationPrompt`
+
+| Test | What to assert |
+|:-----|:---------------|
+| Prompt fires before any registry operation | `input()` called first |
+| Rejected confirmation: nothing executed | Registry unchanged |
+| `--dry-run`: prompt still fires | Not skipped by dry-run |
+
+#### `TestDryRun`
+
+| Test | What to assert |
+|:-----|:---------------|
+| `--dry-run`: scaffolded git command printed but not executed | No git subprocess called |
+| `--dry-run`: no registry rows modified | All table counts and values unchanged |
+
+---
+
+### Integration: `test_pre_commit_sync.py`
+
+New file. Uses `git_repo` and `registry_db` fixtures. Tagged `integration`.
+
+| Test | What to assert |
+|:-----|:---------------|
+| Sync updates `modules` row from config values | Changed config field reflected in DB |
+| Sync adds missing `module_bays` rows from `vaults:` list | Row count matches list length |
+| Sync does not remove existing `module_bays` rows | Pre-existing associations intact |
+| Sync clears `decimated_at` when module has active registry presence | NULL in DB |
+| Sync is a no-op when no `apparatus` in config | Registry untouched; no error |
+| Sync creates `registry.db` if absent | File created; no error |
+| Sync failure does not block commit | Hook exits 0; warning printed |
+| Sync looks up module by UUID first, falls back to path | UUID path exercised; path fallback exercised separately |
+
+---
+
+### Integration: `test_seal.py` Extension (Phase 1.5)
+
+Add to the existing file.
+
+| Test | What to assert |
+|:-----|:---------------|
+| Seal writes `changelogs` row using `module_id` from UUID lookup | `module_id` matches registry row found by UUID, not by path |
 
 ---
 
@@ -524,6 +806,8 @@ These are the database equivalents of the sentinel boundary and the dry-run cont
 | `archivist works query` CLI | Command not yet specced; test when the interface is defined |
 | `archivist works update` | Not yet specced; test when implemented |
 | `archivist init` registration interactive prompts | Same accepted gap as the existing spec — interactive prompts; underlying helpers fully tested individually |
+| `archivist add` registration interactive prompts | Same rationale — shared registration helper is tested; full interactive flow is not |
+| `archivist deinit` confirmation prompt | Prompt behavior covered by fixture monkeypatch; full TTY simulation is not |
 | Multi-apparatus queries | Not a current use case; test when the query interface exists |
 | Pending `work_libraries` cleanup command | Deferred in spec; test when implemented |
 | Domain-specific layer fields | Explicitly out of scope for this phase |
