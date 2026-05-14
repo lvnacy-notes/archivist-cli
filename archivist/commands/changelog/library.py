@@ -87,7 +87,6 @@ import yaml
 from archivist.commands.changelog.changelog_base import ChangelogContext, run_changelog
 from archivist.utils import (
     GitChanges,
-    clean_filename,
     get_file_frontmatter,
     get_file_from_git,
     get_project_name,
@@ -304,7 +303,7 @@ def _route_file_into_stats(
     # Works — anything carrying a work-stage field, regardless of class value
     if "work-stage" in fm:
         status = _get_string_from_fm(fm.get("work-stage"))
-        title = _get_string_from_fm(fm.get("sort-title")) or _get_string_from_fm(fm.get("title")) or full.stem
+        title = _get_string_from_fm(fm.get("title")) or full.stem
         if git_status == "R":
             stats["works"]["updated"].append((filepath, title, status, old_filepath))
         elif git_status == "A":
@@ -520,7 +519,7 @@ def _detect_throughput(changes: GitChanges, git_root: Path) -> list[tuple[str, s
         new_stage = str(fm.get("work-stage", "")).strip()
         old_stage = _get_previous_stage(old_path, git_root)
         if old_stage and old_stage != new_stage:
-            title = fm.get("sort-title") or fm.get("title") or full.stem
+            title = fm.get("title") or full.stem
             transitions.append((str(title), old_stage, new_stage))
     return transitions
 
@@ -553,13 +552,13 @@ def _build_catalog_snapshot(snapshot: CatalogScanResult, throughput: list[tuple[
     # --- Throughput table ---
     if throughput:
         rows = "\n".join(
-            f"| **{title}** | `{old}` | → | `{new}` |"
+            f"| **{ title }** | `{ old }` | → | `{ new }` |"
             for title, old, new in throughput
         )
         throughput_block = (
             "| Work | From | | To |\n"
             "|------|------|-|----|\n"
-            f"{rows}"
+            f"{ rows }"
         )
     else:
         throughput_block = "*No stage transitions this commit.*"
@@ -770,17 +769,16 @@ def _removed_list(
         return f"- {fallback}\n"
     lines: list[str] = []
     for f in filepaths:
-        name = clean_filename(f)
         desc = descriptions.get(f)
         if desc is None:
-            lines.append(f"- `{name}` — [description]\n")
+            lines.append(f"- `{f}` — [description]\n")
         elif isinstance(desc, list):
-            lines.append(f"- `{name}`:\n")
+            lines.append(f"- `{f}`:\n")
             for item in desc:
                 lines.append(f"  - {item}\n")
             lines.append("\n")
         else:
-            lines.append(f"- `{name}` — {desc}\n")
+            lines.append(f"- `{f}` — {desc}\n")
     return "".join(lines)
 
 
@@ -899,20 +897,20 @@ def build_body(ctx: ChangelogContext) -> str:
 
 | Field | Value |
 |-------|-------|
-| Date | {today} |
-| Commit SHA | {commit_sha or "[fill in after commit]"} |
-| Works Added | {len(works["added"])} |
-| Works Updated | {len(works["updated"])} |
-| Works Removed | {len(works["removed"])} |
-| Authors Added | {len(authors["added"])} |
-| Authors Updated | {len(authors["updated"])} |
-| Publications Added | {len(pubs["added"])} |
-| Publications Updated | {len(pubs["updated"])} |
-| Definitions Added | {len(defs["added"])} |
-| Definitions Updated | {len(defs["updated"])} |
-| Other Files Added | {len(other_added)} |
-| Other Files Modified | {len(other_updated)} |
-{snapshot_block}
+| Date | { today } |
+| Commit SHA | { commit_sha or "[fill in after commit]" } |
+| Works Added | { len(works["added"]) } |
+| Works Updated | { len(works["updated"]) } |
+| Works Removed | { len(works["removed"]) } |
+| Authors Added | { len(authors["added"]) } |
+| Authors Updated | { len(authors["updated"]) } |
+| Publications Added | { len(pubs["added"]) } |
+| Publications Updated | { len(pubs["updated"]) } |
+| Definitions Added | { len(defs["added"]) } |
+| Definitions Updated | { len(defs["updated"]) } |
+| Other Files Added | { len(other_added) } |
+| Other Files Modified | { len(other_updated) } |
+{ snapshot_block }
 ## Status Summary
 
 | Status | Count |

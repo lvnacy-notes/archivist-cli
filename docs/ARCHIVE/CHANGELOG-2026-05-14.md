@@ -4,7 +4,7 @@ category:
   - changelog
 log-scope: general
 modified: 2026-05-14
-UUID: 1f79d34d-a8eb-4a8c-962f-64fc433e148b
+UUID: 0bc59994-c747-41e1-b363-adc6442e0787
 commit-sha: 
 files-modified: 3
 files-created: 0
@@ -13,7 +13,7 @@ tags:
   - archivist-cli
 ---
 
-# Centralized DB Docs Update: Phase 1.5 Addition — 2026-05-14
+# Filename Patch — 2026-05-14
 
 ## Overview
 
@@ -28,9 +28,9 @@ tags:
 ## Changes
 
 ### Files Modified
-- `docs/CENTRALIZED_DATABASE_IMPLEMENTATION.md`: [description]
-- `docs/CENTRALIZED_DATABASE_SPEC.md`: [description]
-- `docs/CENTRALIZED_DATABASE_TESTING_SPECIFICATION.md`: [description]
+- `archivist/commands/changelog/library.py`: removed `clean_filename` in favor of straightforward `f` strings
+- `archivist/utils/rename_helpers.py`: removed `clean_filename`
+- `docs/ARCHIVE/CHANGELOG-2026-05-14-fbdc2ac.md` *(renamed from `docs/ARCHIVE/CHANGELOG-2026-05-14.md`)*: [description]
 
 ### New Files Created
 - No new files
@@ -42,7 +42,13 @@ tags:
 <!-- archivist:auto-end -->
 ## Notes
 
-docs: added phase 1.5 to centralized database feature implementation
+patch: filenames are now listed appropriately in generated changelogs
+
+An issue was discovered where Archivist would strip the last few characters 
+from a title before listing it in the changelog. This was due to a faulty
+method for addressing Obsidian conflict copies, where clashing titles are
+appended ascending numerals for disambiguation. Considering this
+functionality of stripping these characters is stupid, it has been removed.
 
 ---
 
