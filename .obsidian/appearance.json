@@ -1,4 +1,7 @@
 {
   "cssTheme": "Velocity",
-  "showRibbon": false
+  "showRibbon": false,
+  "enabledCssSnippets": [
+    "full-pane-width"
+  ]
 }
