@@ -12,15 +12,23 @@ Foundation. Everything else depends on this being in place and correct.
 ### Storage
 
 - [ ] Create `~/.archivist/` directory on first `archivist init` if it does not exist
+- [ ] Initialize `~/.archivist/` as a git repository on first run if it is not already one:
+  - [ ] Run `git init` inside `~/.archivist/`
+  - [ ] Prompt user for a registry remote URL; allow skipping with a warning
+  - [ ] Add the remote if provided (`git remote add origin <url>` or equivalent)
+  - [ ] Make an initial commit of the empty registry state
+  - [ ] If `~/.archivist/` is already a git repo: skip without reinitializing
 - [ ] Create `registry.db` at `~/.archivist/registry.db` on first run if it does not exist
 - [ ] Write `registry.db` schema: `apparatuses`, `modules`, `module_bays` tables
   - `modules` includes `uuid`, `decimated_at`, and `git_remote` from the initial schema — no migration needed for these
   - `module_bays(container_id, contained_id)` — both columns are FKs into `modules`
   - No `vaults` table. Not now, not ever.
+- [ ] Add `.gitignore` to `~/.archivist/` covering SQLite transient files: `*.db-wal`, `*.db-shm`
 - [ ] Add utility function: `get_registry_path() -> Path`
 - [ ] Add utility function: `get_registry_connection() -> sqlite3.Connection`
 - [ ] Add utility function: `get_apparatus_db_path(apparatus_name: str) -> Path`
 - [ ] Add utility function: `get_apparatus_db_connection(apparatus_name: str) -> sqlite3.Connection`
+- [ ] Add utility function: `is_registry_git_repo() -> bool` — checks whether `~/.archivist/` is a git repository; used by the pre-commit hook to determine whether to attempt commit/push
 
 ### `archivist init` — Registration Flow
 
@@ -174,8 +182,30 @@ New top-level command. Deregisters a module from the Apparatus. Git submodule ex
 
 ### 1.5.5 — `archivist init` Augmentation
 
-- [ ] Gather git context silently before the interactive flow:
-  - [ ] `git remote get-url origin` → `git_remote`
+**Forward compatibility requirement:** `get_repo_root()` must not be the first
+call in the init function. Structure the flow as follows:
+
+```
+1. Check working directory for .git (file or folder)
+   → found: call get_repo_root(); proceed
+   → not found: exit with clear error
+                ↑ this branch becomes `git init; get_repo_root(); proceed`
+                  when the git integration ships — one change, not a rewrite
+2. get_repo_root() called here, after the .git check resolves
+3. Check ~/.archivist/ git status (see Phase 1 Storage)
+4. Remainder of init flow
+```
+
+Any existing code that calls `get_repo_root()` before this check must be moved.
+
+- [ ] Restructure init entry point so `.git` check precedes `get_repo_root()`
+- [ ] Gather git context before the interactive flow:
+  - [ ] List configured remotes via `git remote` — do NOT hardcode "origin"
+  - [ ] **No remotes:** inform user; offer free-text URL input; allow skipping with warning
+  - [ ] **One remote:** present for confirmation; allow free-text override
+  - [ ] **Multiple remotes:** present numbered list; require selection; allow free-text override
+  - [ ] Store the selected **URL** (not remote name) as `git_remote` — the name is irrelevant
+  - [ ] Add utility function `list_git_remotes(git_root: Path) -> list[tuple[str, str]]` to `git.py`; export from barrel
   - [ ] `git rev-parse --show-superproject-working-tree` → superproject path (empty string if not a submodule)
   - [ ] `git rev-parse --show-prefix` → relative path within superproject
 - [ ] UUID resolution at start of init flow:
@@ -190,7 +220,7 @@ New top-level command. Deregisters a module from the Apparatus. Git submodule ex
   - [ ] Write all confirmed containment associations to `vaults:` list in config
   - [ ] Vault modules are NOT created here — they must be registered via their own `archivist init`
 - [ ] Generate UUID if not already present; write to config as first field
-- [ ] Write `git-remote` to config if detected and not already present
+- [ ] Write `git-remote` to config if provided and not already present
 - [ ] Upsert `registry.db` on completion; add `module_bays` rows for all confirmed containment associations
 - [ ] Existing behavior for non-Apparatus modules (no apparatus selected): unchanged
 
@@ -215,6 +245,8 @@ Both `archivist add` and `archivist init` share the same interactive registratio
 - [ ] Both `add.py` and `init` command call this helper; neither reimplements the flow
 - [ ] Confirm that augmenting the helper lifts both commands automatically
 
+**Boundary requirement:** The shared helper handles registration data only — UUID generation, config construction, registry upsert, vault association. It must not own any git operations: not `git init`, not `git submodule add`, not hook installation into remote modules. Git operations belong in the command-specific code (`init.py`, `add.py`, `deinit.py`). This boundary is what allows the git integration to layer on top of the Centralized DB implementation without requiring changes to the shared helper.
+
 ---
 
 ### 1.5.8 — Pre-Commit Hook Augmentation
@@ -231,6 +263,14 @@ Both `archivist add` and `archivist init` share the same interactive registratio
   - [ ] If `decimated_at` is set and module now has active registry presence: clear `decimated_at`
   - [ ] If `registry.db` does not exist: create it (call `init_registry_db()`)
   - [ ] On any error: warn and continue; do not block the commit
+- [ ] After registry upsert, commit and push `~/.archivist/`:
+  - [ ] Call `is_registry_git_repo()` — if False, skip silently; do not error
+  - [ ] Check whether `~/.archivist/` has a configured remote — if not, skip push silently; log a warning at most
+  - [ ] Stage all changes in `~/.archivist/` (`git -C ~/.archivist add -A`)
+  - [ ] If nothing to stage: skip commit; do not error
+  - [ ] Commit with auto-generated message: `archivist: sync [module-name] [ISO date]`
+  - [ ] Push to configured remote
+  - [ ] On push failure: warn and continue; do not block the commit
 - [ ] Update hook installation (`archivist hooks install` / `archivist hooks sync`) to write the augmented hook script
 
 ---
