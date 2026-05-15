@@ -4,8 +4,8 @@ category:
   - changelog
 log-scope: general
 modified: 2026-05-14
-UUID: d1001a7c-3e5d-4145-8fc2-37c4fb19dbfb
-commit-sha: 
+UUID: 1f79d34d-a8eb-4a8c-962f-64fc433e148b
+commit-sha: "fbdc2ac"
 files-modified: 3
 files-created: 0
 files-archived: 0
@@ -13,14 +13,14 @@ tags:
   - archivist-cli
 ---
 
-# Update Tests to Reflect Filename Patch — 2026-05-14
+# Centralized DB Docs Update: Phase 1.5 Addition — 2026-05-14
 
 ## Overview
 
 | Field | Value |
 |-------|-------|
 | Date | 2026-05-14 |
-| Commit SHA | [fill in after commit] |
+| Commit SHA | fbdc2ac7069bf53be5eae385ac8c57d28448b39b |
 | Files Added | 0 |
 | Files Modified | 3 |
 | Files Archived | 0 |
@@ -28,9 +28,9 @@ tags:
 ## Changes
 
 ### Files Modified
-- `tests/unit/test_changelog_helpers.py`: [description]
-- `tests/unit/test_rename_helpers.py`: [description]
-- `docs/ARCHIVE/CHANGELOG-2026-05-14-1e5c604.md` *(renamed from `docs/ARCHIVE/CHANGELOG-2026-05-14.md`)*: [description]
+- `docs/CENTRALIZED_DATABASE_IMPLEMENTATION.md`: [description]
+- `docs/CENTRALIZED_DATABASE_SPEC.md`: [description]
+- `docs/CENTRALIZED_DATABASE_TESTING_SPECIFICATION.md`: [description]
 
 ### New Files Created
 - No new files
@@ -42,7 +42,7 @@ tags:
 <!-- archivist:auto-end -->
 ## Notes
 
-patch: updated tests to reflect new filename behavior
+docs: added phase 1.5 to centralized database feature implementation
 
 ---
 

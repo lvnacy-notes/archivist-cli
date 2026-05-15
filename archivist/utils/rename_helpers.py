@@ -3,7 +3,6 @@
 # ---------------------------------------------------------------------------
 
 
-import re
 from collections.abc import Callable, Sequence
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -14,15 +13,6 @@ from archivist.utils.git import GitChanges
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def clean_filename(filepath: str) -> str:
-    """
-    Return just the filename from a path, stripping trailing Obsidian
-    conflict-copy suffixes and non-alphanumeric garbage from the stem.
-    """
-    p = Path(filepath)
-    return _scrub_stem(p.stem) + p.suffix
-
 
 def detect_dir_renames(renames: Sequence[tuple[str, str]]) -> dict[str, str]:
     """
@@ -220,21 +210,10 @@ def rename_display_path(old: str, new: str) -> str:
     """
     Return the display string for the source side of a rename annotation.
 
-    Same directory → just the cleaned filename, same as clean_filename().
-    Different directory → full relative path from git root, because "renamed
-    from `note.md`" is completely fucking useless when the file was actually
-    in a different subdirectory and the reader has no idea which one.
-
-    Either way, Obsidian conflict-copy garbage is stripped from the stem.
-    Obsidian, you know what you did.
+    Always the full repo-relative old path, exactly as git reported it.
+    `new` is accepted for API compatibility but not used here.
     """
-    old_p = Path(old)
-    new_p = Path(new)
-    cleaned_name = _scrub_stem(old_p.stem) + old_p.suffix
-
-    if old_p.parent == new_p.parent:
-        return cleaned_name
-    return str(old_p.parent / cleaned_name)
+    return old
 
 
 def rename_suspicion(old_filepath: str, new_filepath: str) -> str:
@@ -256,29 +235,11 @@ def rename_suspicion(old_filepath: str, new_filepath: str) -> str:
     if old.parent != new.parent:
         reasons.append("cross-directory")
 
-    old_stem = _scrub_stem(old.stem).lower()
-    new_stem = _scrub_stem(new.stem).lower()
+    old_stem = old.stem.lower()
+    new_stem = new.stem.lower()
     if old_stem not in new_stem and new_stem not in old_stem:
         reasons.append("name mismatch")
 
     if not reasons:
         return ""
     return f" ⚠️ *rename unverified ({', '.join(reasons)}) — double-check*"
-
-
-def _scrub_stem(stem: str) -> str:
-    """
-    Strip Obsidian conflict-copy garbage from a filename stem.
-
-    Obsidian suffixes conflict copies with ' 1', ' 2', etc. — a space followed
-    by a digit. The digit is alphanumeric, so a naive '[^a-zA-Z0-9]+$' pattern
-    stops dead in front of it and strips nothing. This handles both cases:
-
-        (\\s+\\d+)*      — one or more (whitespace + digits) groups, e.g. ' 1', ' 2 3'
-        [^a-zA-Z0-9]*$  — any trailing punctuation/symbols after (or instead of) those
-
-    Legitimate stems like 'chapter01' are untouched: the digit is not preceded
-    by whitespace, so (\\s+\\d+)* matches zero times, and '1' is alphanumeric so
-    [^a-zA-Z0-9]* also matches nothing.
-    """
-    return re.sub(r'(\s+\d+)*[^a-zA-Z0-9]*$', '', stem)

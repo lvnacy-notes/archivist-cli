@@ -8,11 +8,11 @@ If one of these fails, the rename logic is broken and you should feel bad.
 """
 
 from archivist.utils import (
-    clean_filename,
     detect_dir_renames,
     infer_undetected_renames,
     process_renames_from_changes,
     reassign_deletions,
+    rename_display_path,
     rename_suspicion,
 )
 
@@ -32,51 +32,51 @@ def _changes(*, A=None, M=None, D=None, R=None):
 
 
 # ===========================================================================
-# clean_filename
+# rename_display_path
 # ===========================================================================
 
-class TestCleanFilename:
+class TestRenameDisplayPath:
     """
-    clean_filename() strips trailing non-alphanumeric garbage from the stem
-    and returns only the filename component of a path.
+    rename_display_path() returns the full repo-relative old path verbatim —
+    no stem scrubbing, no path truncation, no clever bullshit.
 
-    The canonical use case: Obsidian suffixes conflict copies with shit like
-    ' 1', ' 2', or the occasional cryptic punctuation disaster.
+    The `new` parameter is accepted for API compatibility but ignored.
+    What you hand it is what you get back.
     """
 
-    def test_plain_filename_untouched(self):
-        assert clean_filename("notes/my-note.md") == "my-note.md"
+    def test_same_dir_rename_returns_full_old_path(self):
+        result = rename_display_path("notes/old-name.md", "notes/new-name.md")
+        assert result == "notes/old-name.md"
 
-    def test_strips_trailing_space_number(self):
-        # Obsidian conflict copies get suffixed with ' 1', ' 2', etc.
-        assert clean_filename("notes/my-note 1.md") == "my-note.md"
+    def test_cross_dir_move_returns_full_old_path(self):
+        result = rename_display_path("drafts/chapter.md", "published/chapter.md")
+        assert result == "drafts/chapter.md"
 
-    def test_strips_trailing_punctuation(self):
-        assert clean_filename("notes/my-note-.md") == "my-note.md"
+    def test_nested_path_returned_verbatim(self):
+        result = rename_display_path(
+            "EDITIONS/VOL II NO 36/article.md",
+            "ARCHIVE/EDITIONS/VOL II NO 36/article.md",
+        )
+        assert result == "EDITIONS/VOL II NO 36/article.md"
 
-    def test_strips_multiple_trailing_garbage_chars(self):
-        assert clean_filename("notes/some-file 2 .md") == "some-file.md"
+    def test_filename_with_spaces_and_numbers_untouched(self):
+        # This is the exact case that _scrub_stem used to mangle.
+        # "The City of Iron Bones, Part 1" should come out intact.
+        result = rename_display_path(
+            "stories/The City of Iron Bones, Part 1.md",
+            "archive/The City of Iron Bones, Part 1.md",
+        )
+        assert result == "stories/The City of Iron Bones, Part 1.md"
 
-    def test_alphanumeric_stem_preserved(self):
-        # Trailing digit that is genuinely part of the name (no non-alnum after)
-        assert clean_filename("notes/chapter01.md") == "chapter01.md"
+    def test_root_level_file(self):
+        result = rename_display_path("README.md", "CONTRIBUTING.md")
+        assert result == "README.md"
 
-    def test_ignores_directory_components(self):
-        # Only the filename matters; the path prefix is dropped
-        assert clean_filename("deep/nested/path/file.md") == "file.md"
-
-    def test_preserves_extension(self):
-        assert clean_filename("docs/README.txt") == "README.txt"
-
-    def test_bare_filename_no_dir(self):
-        assert clean_filename("standalone.md") == "standalone.md"
-
-    def test_hyphens_in_middle_of_stem_untouched(self):
-        # Hyphens mid-stem are fine; only trailing garbage gets the axe
-        assert clean_filename("my-great-note.md") == "my-great-note.md"
-
-    def test_deep_path_with_conflict_suffix(self):
-        assert clean_filename("ARCHIVE/EDITIONS/042/draft 3.md") == "draft.md"
+    def test_new_parameter_is_ignored(self):
+        # Regardless of what `new` is, result is always `old`.
+        old = "some/path/file.md"
+        assert rename_display_path(old, "anything/at/all.md") == old
+        assert rename_display_path(old, old) == old
 
 
 # ===========================================================================
@@ -396,8 +396,10 @@ class TestRenameSuspicion:
         result = rename_suspicion("notes/notebook.md", "notes/note.md")
         assert "name mismatch" not in result
 
-    def test_trailing_obsidian_garbage_stripped_before_comparison(self):
-        # Conflict suffix on old path should not cause a false name mismatch
+    def test_space_number_suffix_no_false_mismatch(self):
+        # "my-note" is a substring of "my-note 1" — no name mismatch fires.
+        # This is a common rename pattern (resolving a duplicate); the
+        # substring check handles it correctly without any stem scrubbing.
         result = rename_suspicion("notes/my-note 1.md", "notes/my-note.md")
         assert result == ""
 
@@ -442,9 +444,9 @@ class TestDeepPathChains:
     _DEEP_OLD = f"{_DEEP_PREFIX}/old-subdir/note.md"
     _DEEP_NEW = f"{_DEEP_PREFIX}/new-subdir/note.md"
 
-    def test_clean_filename_deep_path(self):
+    def test_rename_display_path_deep_path(self):
         deep = f"{self._DEEP_PREFIX}/subdir/my-note 1.md"
-        assert clean_filename(deep) == "my-note.md"
+        assert rename_display_path(deep, "anywhere/else.md") == deep
 
     def test_detect_dir_renames_deep_path(self):
         renames = [(self._DEEP_OLD, self._DEEP_NEW)]
