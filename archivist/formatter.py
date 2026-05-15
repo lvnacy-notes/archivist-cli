@@ -1,8 +1,17 @@
 """
-archivist.formatter — ANSI-styled help formatter for argparse.
+archivist.formatter — ANSI styling for argparse help and the Custodian logging layer.
 
-Provides ArchivistHelpFormatter (drop-in formatter_class replacement) and
-fmt_description() / fmt_examples() helpers for building rich help strings.
+Argparse surface:
+    ArchivistHelpFormatter   drop-in formatter_class replacement
+    fmt_description()        plain-text description passthrough
+    fmt_examples()           formatted EXAMPLES block for description= / epilog=
+    fmt_warning()            formatted WARNING block for epilog=
+
+Logging surface (used by output.py and cli.py — nowhere else):
+    SUCCESS                  custom log level (25) between INFO and WARNING
+    ArchivistTerminalFormatter   maps levels to emoji/ANSI for terminal output
+    ArchivistFileFormatter       timestamp + level for --log-file output
+    ArchivistStreamHandler       routes INFO/DEBUG to stdout, WARNING/ERROR to stderr
 
 Falls back to plain text automatically when:
   - stdout is not a TTY (piped output, CI, etc.)
@@ -10,6 +19,7 @@ Falls back to plain text automatically when:
 """
 
 import argparse
+import logging
 import os
 import shutil
 import sys
@@ -156,3 +166,92 @@ class ArchivistHelpFormatter(argparse.RawDescriptionHelpFormatter):
         if prefix is None:
             prefix = self._c(BOLD + YELLOW, "USAGE") + "\n  "
         return super()._format_usage(usage, actions, groups, prefix)
+
+
+# ── Logging infrastructure ────────────────────────────────────────────────────
+#
+# SUCCESS lives here so both output.py and cli.py import it from one place.
+# Register it immediately on module load — logging.addLevelName is idempotent,
+# so importing this module more than once (e.g. in tests) doesn't blow up.
+
+SUCCESS = 25
+logging.addLevelName(SUCCESS, "SUCCESS")
+
+
+class ArchivistTerminalFormatter(logging.Formatter):
+    """
+    Terminal-facing log formatter. Maps log levels to the emoji/ANSI prefixes
+    that define Archivist's output personality. Falls back to plain text via
+    _ansi_ok() when stdout isn't a TTY or NO_COLOR is set.
+
+    Level → prefix mapping mirrors the output.py public API exactly. If you
+    change a prefix here, change it there. They are supposed to be identical.
+    Don't be the person who makes them drift.
+    """
+
+    _LEVEL_STYLES: dict[int, tuple[str, str]] = {
+        logging.DEBUG:   ("",     DIM),
+        logging.INFO:    ("",     ""),
+        SUCCESS:         ("✅ ",  GREEN),
+        logging.WARNING: ("⚠️  ", YELLOW),
+        logging.ERROR:   ("❌  ", BOLD),
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        ansi = _ansi_ok()
+        prefix, color = self._LEVEL_STYLES.get(record.levelno, ("", ""))
+        msg = record.getMessage()
+        if color and ansi:
+            return f"{prefix}{_esc(color, msg, ansi)}"
+        return f"{prefix}{msg}"
+
+
+class ArchivistFileFormatter(logging.Formatter):
+    """
+    File-facing log formatter. No emoji, no ANSI, no feelings.
+    Timestamps and level names, because the log file is a record, not a
+    performance. The SUCCESS custom level gets its name written out properly
+    instead of appearing as the deeply unhelpful 'Level 25'.
+
+    Format: 2026-04-15 14:32:01 SUCCESS  Done. 12/47 file(s) updated.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            fmt="%(asctime)s %(levelname)-8s %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+
+    def format(self, record: logging.LogRecord) -> str:
+        if record.levelno == SUCCESS:
+            # Copy before mutating — the record is reused across handlers and
+            # we are not in the business of causing side effects for the next
+            # handler in line.
+            record = logging.makeLogRecord(record.__dict__)
+            record.levelname = "SUCCESS"
+        return super().format(record)
+
+
+class ArchivistStreamHandler(logging.Handler):
+    """
+    Split stdout/stderr stream handler. WARNING and above go to stderr where
+    errors belong; everything below goes to stdout where someone might actually
+    read it. A stdlib StreamHandler commits to one stream at construction time
+    and stays there. This one doesn't.
+    """
+
+    # Purely for type clarity
+    # Pyright does not track parent class attributes that are set in the constructor,
+    # and without this mypy/Pyright doesn't know that self.terminator exists.
+    def __init__(self) -> None:
+        super().__init__()
+        self.terminator = "\n"
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            stream = sys.stderr if record.levelno >= logging.WARNING else sys.stdout
+            stream.write(msg + self.terminator)
+            stream.flush()
+        except Exception:
+            self.handleError(record)

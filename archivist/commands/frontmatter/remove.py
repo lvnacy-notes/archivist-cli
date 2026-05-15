@@ -22,13 +22,18 @@ from pathlib import Path
 from archivist.utils import (
     FRONTMATTER_RE,
     NoteFilter,
+    TemplaterMode,
     build_note_filter,
     get_repo_root,
+    get_templater_mode,
     has_frontmatter,
+    mask_templater_expressions,
     note_matches_filter,
     print_dry_run_header,
     progress,
+    read_archivist_config,
     remove_property_from_frontmatter,
+    restore_templater_expressions,
     resolve_file_targets,
     safe_read_markdown,
     safe_write_markdown,
@@ -38,8 +43,20 @@ from archivist.utils import (
 )
 
 
-def _process_note(note_path: Path, prop: str, dry_run: bool, nf: NoteFilter) -> bool:
-    """Process a single note. Returns True if a change was made (or would be)."""
+def _process_note(
+    note_path: Path,
+    prop: str,
+    dry_run: bool,
+    nf: NoteFilter,
+    mode: TemplaterMode
+) -> bool:
+    """Process a single note. Returns True if a change was made (or would be).
+    
+    Templater handling:
+      DISABLED — no masking, removal operates on raw_fm directly
+      PRESERVE — mask expressions before removal, restore after
+      RESOLVE  — mask expressions before removal, restore after
+    """
     content = safe_read_markdown(note_path)
     if content is None:
         return False
@@ -56,9 +73,21 @@ def _process_note(note_path: Path, prop: str, dry_run: bool, nf: NoteFilter) -> 
     if not note_matches_filter(nf, raw_fm):
         return False
 
-    updated_fm, found = remove_property_from_frontmatter(raw_fm, prop)
+    # Mask expressions before removal if mode is not DISABLED
+    if mode is not TemplaterMode.DISABLED:
+        masked_fm, mask_map = mask_templater_expressions(raw_fm)
+    else:
+        masked_fm, mask_map = raw_fm, {}
+
+    updated_masked_fm, found = remove_property_from_frontmatter(masked_fm, prop)
     if not found:
         return False
+
+    # Restore expressions after removal
+    if mode is not TemplaterMode.DISABLED:
+        updated_fm = restore_templater_expressions(updated_masked_fm, mask_map)
+    else:
+        updated_fm = updated_masked_fm
 
     new_content = f"---\n{updated_fm}\n---\n{body}" if updated_fm.strip() else body
 
@@ -78,6 +107,8 @@ def run(args: argparse.Namespace) -> None:
     validate_note_filter(nf, require_at_least_one=False, command_name="frontmatter remove")
 
     root = get_repo_root()
+    config = read_archivist_config(root)
+    mode = get_templater_mode(config)
 
     if args.dry_run:
         print_dry_run_header()
@@ -95,7 +126,7 @@ def run(args: argparse.Namespace) -> None:
     progress(f"Scanning {len(files)} file(s) for property '{args.property}'...\n")
 
     def _callback(f: Path) -> bool:
-        return _process_note(f, args.property, args.dry_run, nf)
+        return _process_note(f, args.property, args.dry_run, nf, mode)
 
     changed = sum(1 for f in files if _callback(f))
 

@@ -21,15 +21,19 @@ from pathlib import Path
 from archivist.utils import (
     FRONTMATTER_RE,
     NoteFilter,
+    TemplaterMode,
     build_note_filter,
     get_repo_root,
+    get_templater_mode,
     has_frontmatter,
+    mask_templater_expressions,
     match_property_line,
     note_matches_filter,
     print_dry_run_header,
-    process_markdown_files,
     progress,
+    read_archivist_config,
     resolve_file_targets,
+    restore_templater_expressions,
     safe_read_markdown,
     success,
     update_frontmatter_in_file,
@@ -38,7 +42,11 @@ from archivist.utils import (
 )
 
 
-def _rename_property_in_raw_fm(raw_fm: str, old_prop: str, new_prop: str) -> tuple[str, bool]:
+def _rename_property_in_raw_fm(
+    raw_fm: str,
+    old_prop: str,
+    new_prop: str
+) -> tuple[str, bool]:
     """
     Rename a property key in raw YAML frontmatter, preserving its value exactly.
     Returns (updated_frontmatter, was_found).
@@ -74,10 +82,16 @@ def _process_note(
     new_prop: str,
     dry_run: bool,
     nf: NoteFilter,
+    mode: TemplaterMode,
 ) -> bool:
     """
     Rename old_prop → new_prop in a single note's frontmatter.
     Returns True if a change was made (or would be in dry-run mode).
+    
+    Templater handling:
+      DISABLED — no masking, rename operates on raw_fm directly
+      PRESERVE — mask expressions before rename, restore after
+      RESOLVE  — mask expressions before rename, restore after
     """
     # We need to read the file up-front to run the filter check before
     # handing off to update_frontmatter_in_file. The transformer closure
@@ -102,14 +116,28 @@ def _process_note(
 
     def _transformer(raw_fm: str, body: str) -> str | None:
         nonlocal found_and_changed
-        updated_fm, found = _rename_property_in_raw_fm(raw_fm, old_prop, new_prop)
+        
+        # Mask expressions before rename if mode is not DISABLED
+        if mode is not TemplaterMode.DISABLED:
+            masked_fm, mask_map = mask_templater_expressions(raw_fm)
+        else:
+            masked_fm, mask_map = raw_fm, {}
+        
+        updated_masked_fm, found = _rename_property_in_raw_fm(masked_fm, old_prop, new_prop)
         if not found:
             return None
         found_and_changed = True
+        
+        # Restore expressions after rename
+        if mode is not TemplaterMode.DISABLED:
+            updated_fm = restore_templater_expressions(updated_masked_fm, mask_map)
+        else:
+            updated_fm = updated_masked_fm
+        
         if dry_run:
-            progress(f"  [dry-run] Would rename '{old_prop}' → '{new_prop}' in: {note_path}")
+            progress(f"  [dry-run] Would rename '{ old_prop }' → '{ new_prop }' in: { note_path }")
             return None  # signal no-write; found_and_changed is already set
-        success(f"Renamed '{old_prop}' → '{new_prop}' in: {note_path}")
+        success(f"Renamed '{ old_prop }' → '{ new_prop }' in: { note_path }")
         return f"---\n{updated_fm}\n---\n{body}"
 
     update_frontmatter_in_file(note_path, _transformer)
@@ -125,29 +153,42 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     nf = build_note_filter(args)
-    validate_note_filter(nf, require_at_least_one=False, command_name="frontmatter rename")
+    validate_note_filter(
+        nf,
+        require_at_least_one = False,
+        command_name = "frontmatter rename"
+    )
 
     root = get_repo_root()
+    config = read_archivist_config(root)
+    mode = get_templater_mode(config)
 
     if args.dry_run:
         print_dry_run_header()
 
-    progress(f"Root: {root}")
+    progress(f"Root: { root }")
 
     if nf.active_filter_labels:
-        progress(f"Filters: {' AND '.join(nf.active_filter_labels)}")
+        progress(f"Filters: { ' AND '.join(nf.active_filter_labels) }")
 
     files = resolve_file_targets(nf, root)
     if not files:
         warning("No .md files found matching the given criteria.")
         sys.exit(0)
 
-    progress(f"Scanning {len(files)} file(s) to rename '{args.property}' → '{args.new_name}'...\n")
+    progress(f"Scanning { len(files) } file(s) to rename '{ args.property }' → '{ args.new_name }'...\n")
 
     def _callback(f: Path) -> bool:
-        return _process_note(f, args.property, args.new_name, args.dry_run, nf)
+        return _process_note(
+            f,
+            args.property,
+            args.new_name,
+            args.dry_run,
+            nf,
+            mode
+        )
 
     changed = sum(1 for f in files if _callback(f))
 
     label = "would be updated" if args.dry_run else "updated"
-    progress(f"\nDone. {changed}/{len(files)} file(s) {label}.")
+    progress(f"\nDone. { changed }/{ len(files) } file(s) { label }.")
