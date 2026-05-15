@@ -4,16 +4,16 @@ category:
   - changelog
 log-scope: general
 modified: 2026-05-14
-UUID: d1001a7c-3e5d-4145-8fc2-37c4fb19dbfb
+UUID: a35f7733-bb9f-46ff-bf0f-50acdd047d63
 commit-sha: 
-files-modified: 3
-files-created: 0
-files-archived: 0
+files-modified: 2
+files-created: 1
+files-archived: 1
 tags:
   - archivist-cli
 ---
 
-# Update Tests to Reflect Filename Patch — 2026-05-14
+# Project Maintenance — 2026-05-14
 
 ## Overview
 
@@ -21,28 +21,27 @@ tags:
 |-------|-------|
 | Date | 2026-05-14 |
 | Commit SHA | [fill in after commit] |
-| Files Added | 0 |
-| Files Modified | 3 |
-| Files Archived | 0 |
+| Files Added | 1 |
+| Files Modified | 2 |
+| Files Archived | 1 |
 
 ## Changes
 
 ### Files Modified
-- `tests/unit/test_changelog_helpers.py`: [description]
-- `tests/unit/test_rename_helpers.py`: [description]
-- `docs/ARCHIVE/CHANGELOG-2026-05-14-1e5c604.md` *(renamed from `docs/ARCHIVE/CHANGELOG-2026-05-14.md`)*: [description]
+- `.gitignore`: added the fucking Obsidian workspace config since its annoying as fuck
+- `pyproject.toml`: bump version for filename patch
 
 ### New Files Created
-- No new files
+- `docs/ARCHIVE/CHANGELOG-2026-05-14-cdb08e5.md`: backfilled commit hash from prior commit
 
 ### Files Removed / Archived
-- No files archived
+- `.obsidian/workspace.json`: why is this fucking file so fucking annoyting?
 
 
 <!-- archivist:auto-end -->
 ## Notes
 
-patch: updated tests to reflect new filename behavior
+patch: bump version for filename patch
 
 ---
 
