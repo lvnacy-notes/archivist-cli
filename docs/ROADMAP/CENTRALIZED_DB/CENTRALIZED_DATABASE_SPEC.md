@@ -61,6 +61,10 @@ All Archivist databases live at a system-wide path, not inside any individual pr
 
 The `~/.archivist/` directory is created on first run of `archivist init` if it does not exist. The registry database is created at that time. Apparatus databases are created when the first module is registered to a new Apparatus.
 
+**`~/.archivist/` is a git repository.** The entire directory — `registry.db`, all apparatus databases, everything — is version controlled. This is the foundation for `archivist restore` (deferred; see `GIT_SPEC.md`). The directory is initialized as a git repo on first run and configured with a user-supplied remote. The pre-commit hook commits and pushes changes to `~/.archivist/` automatically after each registry sync, keeping the remote current.
+
+SQLite files are binary. Git tracks them but cannot diff or merge them meaningfully. **`~/.archivist/` is never merged — it is overwritten from the remote on restore.** No merge conflicts. The remote is the restoration anchor; local is the active state. The pre-commit sync keeps them in agreement.
+
 ---
 
 ## 4. Module Types
@@ -322,13 +326,24 @@ Run from within the module. Covers:
 - **Standalone repo** with no vault context
 - **Reconfiguration** — module already registered; user wants to update registration data
 
-**Git context gathered silently before the interactive flow:**
+**Git context gathered before the interactive flow:**
+
+`git_remote` is NOT captured via `git remote get-url origin`. Not every user names their remote "origin"; git imposes no such convention. Instead, Archivist lists all configured remotes and lets the user select:
+
+- **No remotes configured:** inform the user; offer free-text URL input; allow skipping with a warning that `restore` capability will be limited
+- **One remote configured:** present it and ask for confirmation; allow overriding with free-text input
+- **Multiple remotes configured:** present a numbered list; require selection; allow free-text input for "none of these"
+
+The selected **URL** (not the remote name) is stored as `modules.git_remote`. Remote names are irrelevant for restore purposes.
+
+Superproject context is still gathered silently:
 
 ```
-git remote get-url origin                       → git_remote
 git rev-parse --show-superproject-working-tree  → superproject path (if inside a submodule)
 git rev-parse --show-prefix                     → path relative to superproject
 ```
+
+**Forward compatibility with git integration:** The current init flow calls `get_repo_root()` early and exits if no repo is found. This must not be the first call in the function. Structure the init flow so the `.git` check comes first and `get_repo_root()` is called only after that check resolves. When the git integration ships, the "no `.git` found" branch will run `git init` instead of exiting — this restructuring must be in place to make that a clean one-line change rather than a full flow rewrite.
 
 **UUID resolution:**
 
@@ -705,7 +720,57 @@ ORDER BY m.name ASC
 
 ---
 
-## 16. Open Questions and Deferred Decisions
+## 16. `archivist init` — Forward Compatibility with the Git Integration Phase
+
+The Centralized Database feature and the Git Integration feature both modify `archivist init`. The Centralized DB version adds Apparatus registration. The Git Integration version adds `git init` capability, live git operation execution, and `~/.archivist/` initialization as a git repo. These two versions of the same command must not require a destructive rewrite of the Centralized DB work when the git integration ships. The following design decisions are made here, during the Centralized DB phase, to ensure that the git integration layers on cleanly.
+
+### 16.1 — `~/.archivist/` Git Initialization Ships with Centralized DB
+
+`~/.archivist/` git initialization is **not deferred to the git integration phase**. It is implemented as part of the Centralized Database feature. On first run of `archivist init`, after creating `~/.archivist/` if it does not exist, Archivist:
+
+1. Checks whether `~/.archivist/` is already a git repository
+2. If not: runs `git init` inside `~/.archivist/`; prompts the user for a registry remote URL; adds the remote if provided; makes an initial commit
+3. If yes: proceeds without reinitializing
+
+Doing this now means that by the time the git integration ships, every machine that has run `archivist init` will already have a version-controlled registry. The git integration then activates live module-level git operations without needing to touch the registry setup. Machines that initialized before this version of Archivist can upgrade simply by re-running `archivist init` — the reconfiguration path handles the `~/.archivist/` check naturally.
+
+### 16.2 — `get_repo_root()` Must Not Be the First Call in `archivist init`
+
+The current init flow calls `get_repo_root()` early and exits if no git repo is found. When the git integration ships, the "no repo found" case will run `git init` instead of exiting. That change must be a one-line branch swap, not a flow rewrite.
+
+**Required structure for the Centralized DB implementation:**
+
+```
+1. Check working directory for .git (file or folder)
+   → found: call get_repo_root(); proceed
+   → not found: exit with error (current behavior)
+                ↑ this branch becomes `git init; get_repo_root(); proceed`
+                  when the git integration ships — one change, not a rewrite
+2. get_repo_root() — called here, after the check, not before
+3. Remainder of init flow
+```
+
+`get_repo_root()` must not be called before this check. Any code that currently calls it at the top of the init function must be moved. This is a non-negotiable forward-compatibility requirement.
+
+### 16.3 — Interactive Remote Selection, Not Hardcoded "origin"
+
+Covered in §9.2. The `git remote get-url origin` call is replaced with interactive remote listing and selection during the Centralized DB implementation. This is not a deferred concern — it is implemented now so that modules registered during the Centralized DB phase have correctly populated `git_remote` values before the git integration ships.
+
+### 16.4 — Pre-Commit Hook: Graceful Degradation on Missing Registry Remote
+
+The pre-commit hook sync (§10) adds a registry commit-and-push step. On machines that have `~/.archivist/` initialized but have not yet configured a registry remote (e.g. users who skipped the remote prompt during init), this step must be a clean no-op rather than an error. The check is simple: if `~/.archivist/` has no configured remote, skip the push silently. Log a warning at most. Do not block the commit.
+
+This graceful degradation also handles the window between the Centralized DB feature shipping and the user re-running `archivist init` on any machine that was initialized on an older version. The registry still stays current locally; it just does not push until a remote is configured.
+
+### 16.5 — Shared Registration Helper Must Not Own Git Operations
+
+The shared registration helper (§9, §1.5.7 of the implementation checklist) handles registration data: UUID generation, config writing, registry upsert, vault association. It must not own any git operations — not `git init`, not `git submodule add`, not hook installation into remote modules. Those belong in the command-specific code (`init.py`, `add.py`, `deinit.py`).
+
+This boundary is what makes the git integration a layering exercise rather than a refactor. The helper stays unchanged; the commands around it gain git execution capability.
+
+---
+
+## 17. Open Questions and Deferred Decisions
 
 The following are explicitly out of scope for initial implementation and should be revisited when the use cases are better understood.
 
@@ -717,7 +782,7 @@ The following are explicitly out of scope for initial implementation and should 
 
 **`archivist works cleanup`** — handle `work_libraries` rows where `work_id` is NULL and no corresponding card exists on disk. Deferred.
 
-**Multi-machine sync** — the roadmap notes that SQLite is the right choice at every stage up to the point where multi-machine access or concurrent writes become a requirement. That point has not arrived. If it does, the schema is already relational and migration to PostgreSQL is straightforward. Do not touch this until the pain is real.
+**Multi-machine sync** — previously listed as a deferred concern pending scale requirements. This is superseded: `~/.archivist/` as a git repository with a configured remote is the sync mechanism. Each machine pulls from the remote on restore; the pre-commit hook keeps the remote current. SQLite-in-git is not a merge strategy — it is a backup and restore strategy. Concurrent writes from multiple machines to the same registry are not supported and are not a design goal. If that requirement ever materializes, migration to PostgreSQL is straightforward; the schema is already relational.
 
 ---
 

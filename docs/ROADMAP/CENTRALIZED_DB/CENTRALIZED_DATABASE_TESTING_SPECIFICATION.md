@@ -219,11 +219,156 @@ def archivist_config(tmp_path):
             vaults=["my-vault"])
     """
     ...
+
+
+@pytest.fixture
+def repo_no_remote(tmp_path) -> Path:
+    """
+    A git repo with no remotes configured. Used to test remote selection
+    behavior when nothing is available.
+    """
+    import subprocess
+    repo = tmp_path / "no-remote-repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    return repo
+
+
+@pytest.fixture
+def repo_one_remote(tmp_path) -> Path:
+    """
+    A git repo with exactly one remote, named 'upstream' (not 'origin') to
+    catch any hardcoded assumptions about the remote name.
+    """
+    import subprocess
+    repo = tmp_path / "one-remote-repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "remote", "add", "upstream", "git@github.com:user/repo.git"],
+        cwd=repo, check=True, capture_output=True,
+    )
+    return repo
+
+
+@pytest.fixture
+def repo_multi_remote(tmp_path) -> Path:
+    """
+    A git repo with multiple remotes, named by platform (github, sourcehut).
+    Used to test numbered-list selection behavior.
+    """
+    import subprocess
+    repo = tmp_path / "multi-remote-repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "remote", "add", "github", "git@github.com:user/repo.git"],
+        cwd=repo, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "remote", "add", "sourcehut", "git@git.sr.ht:~user/repo"],
+        cwd=repo, check=True, capture_output=True,
+    )
+    return repo
+
+
+@pytest.fixture
+def archivist_home_git_repo(tmp_path) -> Path:
+    """
+    A temporary ~/.archivist/-equivalent directory initialized as a git repo
+    with a bare remote. Used to test registry commit/push behavior without
+    touching the real ~/.archivist/.
+
+    Tests that use this fixture must monkeypatch get_registry_path() to return
+    this directory instead of the real ~/.archivist/.
+    """
+    import subprocess
+    # Bare remote to push to
+    bare = tmp_path / "registry-remote.git"
+    bare.mkdir()
+    subprocess.run(["git", "init", "--bare"], cwd=bare, check=True, capture_output=True)
+
+    archivist_home = tmp_path / ".archivist"
+    archivist_home.mkdir()
+    subprocess.run(["git", "init"], cwd=archivist_home, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)],
+        cwd=archivist_home, check=True, capture_output=True,
+    )
+    # Initial commit so push has something to send
+    (archivist_home / ".gitignore").write_text("*.db-wal\n*.db-shm\n")
+    subprocess.run(["git", "add", ".gitignore"], cwd=archivist_home, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "archivist: init registry"],
+        cwd=archivist_home, check=True, capture_output=True,
+    )
+    return archivist_home
 ```
 
 ---
 
 ## Phase 1 — Global Registry
+
+### Unit: `test_git.py` Extensions (Phase 1)
+
+Add to the existing file. These cover the new `list_git_remotes()` utility and
+`is_registry_git_repo()` required by the Centralized DB phase.
+
+#### `list_git_remotes`
+
+| Case | What to assert |
+|:-----|:---------------|
+| No remotes configured | Returns empty list; does not raise |
+| One remote (non-"origin" name) | Returns list with one `(name, url)` tuple; name is not assumed to be "origin" |
+| Multiple remotes | Returns all `(name, url)` pairs; order is stable |
+| Non-git directory | Returns empty list; does not raise |
+
+#### `is_registry_git_repo`
+
+| Case | What to assert |
+|:-----|:---------------|
+| `~/.archivist/` is a git repo | Returns `True` |
+| `~/.archivist/` exists but is not a git repo | Returns `False` |
+| `~/.archivist/` does not exist | Returns `False`; does not raise |
+
+---
+
+### Integration: `test_registration.py` Extensions — Remote Selection (Phase 1)
+
+Add to the existing file. Uses `repo_no_remote`, `repo_one_remote`, and
+`repo_multi_remote` fixtures. Monkeypatches `input()` to simulate user responses.
+
+#### `TestRemoteSelection`
+
+| Test | What to assert |
+|:-----|:---------------|
+| No remotes: user enters URL manually | Entered URL stored as `git_remote` in DB |
+| No remotes: user skips | `git_remote` is NULL or absent; warning printed; no error |
+| One remote (non-"origin"): presented for confirmation, accepted | Remote URL stored verbatim |
+| One remote: user overrides with free-text | Override URL stored; not the detected remote |
+| Multiple remotes: user selects by number | Selected remote's URL stored |
+| Multiple remotes: user enters free-text override | Entered URL stored; neither detected remote used |
+| Stored value is always a URL, never a remote name | `git_remote` does not contain a git remote name like "origin" or "upstream" |
+
+---
+
+### Integration: `test_registry_git_init.py` (Phase 1)
+
+New file. Tests the `~/.archivist/` git initialization flow. Uses
+`archivist_home_git_repo` fixture and monkeypatches `get_registry_path()`.
+Tagged `integration`.
+
+| Test | What to assert |
+|:-----|:---------------|
+| First run: `~/.archivist/` created and initialized as git repo | `~/.archivist/.git` exists |
+| First run: `.gitignore` written with `*.db-wal`, `*.db-shm` | File present with correct content |
+| First run: initial commit made | `git log` in `~/.archivist/` shows at least one commit |
+| Remote provided by user: added to `~/.archivist/` repo | `git remote -v` shows configured remote |
+| Remote skipped by user: repo initialized without remote | No remote configured; no error |
+| `~/.archivist/` already a git repo: no reinitialization | `git log` unchanged; no second init commit |
+| `~/.archivist/` already a git repo with remote: remote unchanged | Existing remote not overwritten |
+
+---
 
 ### Unit: `test_registry.py`
 
@@ -511,6 +656,10 @@ New file. Uses `git_repo` and `registry_db` fixtures. Tagged `integration`.
 | Sync creates `registry.db` if absent | File created; no error |
 | Sync failure does not block commit | Hook exits 0; warning printed |
 | Sync looks up module by UUID first, falls back to path | UUID path exercised; path fallback exercised separately |
+| Sync commit/push skipped when `~/.archivist/` is not a git repo | No git subprocess called; no error |
+| Sync commit/push skipped when `~/.archivist/` has no remote | No push attempted; warning printed at most |
+| Sync commit/push attempted when `~/.archivist/` is a git repo with a remote | `git -C ~/.archivist add -A` and commit called |
+| Push failure does not block commit | Hook exits 0; warning printed |
 
 ---
 
