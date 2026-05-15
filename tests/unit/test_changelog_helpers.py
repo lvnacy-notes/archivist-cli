@@ -349,27 +349,24 @@ class TestFormatFileList:
         last_bullet_idx = max(i for i, l in enumerate(lines) if l.strip().startswith("- ") and "file.md" not in l)
         assert lines[last_bullet_idx + 1] == ""
 
-    def test_rename_shows_old_filename_not_old_full_path_when_same_dir(self):
+    def test_rename_annotation_shows_full_old_path_same_dir(self):
         """
-        Same-directory rename: the annotation should show just the filename,
-        not the full path. Cross-directory renames show the full path.
-        Nobody wants to read 'renamed from notes/old-name.md' when the
-        directory hasn't changed.
+        Same-directory rename: the annotation shows the full repo-relative
+        old path. rename_display_path() returns old verbatim — no path
+        truncation regardless of whether the directory changed.
         """
         renames = {"notes/new-name.md": "notes/old-name.md"}
         result = format_file_list(["notes/new-name.md"], "fallback", {}, active_renames=renames)
-        # The old name's parent dir should NOT appear in the rename annotation
-        assert "notes/old-name.md" not in result
-        assert "old-name.md" in result
+        assert "notes/old-name.md" in result
 
-    def test_rename_shows_full_path_when_cross_directory(self):
+    def test_rename_annotation_shows_full_old_path_cross_directory(self):
         """
-        Cross-directory rename: the full old path (relative to git root)
-        should appear so the user knows where the thing came from.
+        Cross-directory rename: the full old path appears in the annotation,
+        same as same-directory renames — rename_display_path() is consistent.
         """
         renames = {"published/chapter.md": "drafts/chapter.md"}
         result = format_file_list(["published/chapter.md"], "fallback", {}, active_renames=renames)
-        assert "drafts" in result
+        assert "drafts/chapter.md" in result
 
 
 # ===========================================================================

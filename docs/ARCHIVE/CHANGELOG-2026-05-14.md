@@ -4,7 +4,7 @@ category:
   - changelog
 log-scope: general
 modified: 2026-05-14
-UUID: 0bc59994-c747-41e1-b363-adc6442e0787
+UUID: d1001a7c-3e5d-4145-8fc2-37c4fb19dbfb
 commit-sha: 
 files-modified: 3
 files-created: 0
@@ -13,7 +13,7 @@ tags:
   - archivist-cli
 ---
 
-# Filename Patch — 2026-05-14
+# Update Tests to Reflect Filename Patch — 2026-05-14
 
 ## Overview
 
@@ -28,9 +28,9 @@ tags:
 ## Changes
 
 ### Files Modified
-- `archivist/commands/changelog/library.py`: removed `clean_filename` in favor of straightforward `f` strings
-- `archivist/utils/rename_helpers.py`: removed `clean_filename`
-- `docs/ARCHIVE/CHANGELOG-2026-05-14-fbdc2ac.md` *(renamed from `docs/ARCHIVE/CHANGELOG-2026-05-14.md`)*: [description]
+- `tests/unit/test_changelog_helpers.py`: [description]
+- `tests/unit/test_rename_helpers.py`: [description]
+- `docs/ARCHIVE/CHANGELOG-2026-05-14-1e5c604.md` *(renamed from `docs/ARCHIVE/CHANGELOG-2026-05-14.md`)*: [description]
 
 ### New Files Created
 - No new files
@@ -42,13 +42,7 @@ tags:
 <!-- archivist:auto-end -->
 ## Notes
 
-patch: filenames are now listed appropriately in generated changelogs
-
-An issue was discovered where Archivist would strip the last few characters 
-from a title before listing it in the changelog. This was due to a faulty
-method for addressing Obsidian conflict copies, where clashing titles are
-appended ascending numerals for disambiguation. Considering this
-functionality of stripping these characters is stupid, it has been removed.
+patch: updated tests to reflect new filename behavior
 
 ---
 
