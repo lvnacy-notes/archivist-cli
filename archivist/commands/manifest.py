@@ -13,7 +13,6 @@ from pathlib import Path
 
 from archivist.utils import (
     GitChanges,
-    clean_filename,
     ensure_staged_under,
     error,
     extract_descriptions,
@@ -151,21 +150,22 @@ def _build_manifest_body(
             return f"- {fallback}\n"
         lines: list[str] = []
         for f in files:
-            desc = descriptions.get(clean_filename(f)) or descriptions.get(f) or "[description]"
+            fname = Path(f).name
+            desc = descriptions.get(fname) or descriptions.get(f) or "[description]"
             if isinstance(desc, list):
-                lines.append(f"- `{clean_filename(f)}`:")
+                lines.append(f"- `{fname}`:")
                 for item in desc:
                     lines.append(f"  - {item}")
                 lines.append("")
             else:
-                lines.append(f"- `{clean_filename(f)}`: {desc}")
+                lines.append(f"- `{fname}`: {desc}")
         return "\n".join(lines) + "\n"
 
     def rename_list(renames: list[tuple[str, str]], fallback: str) -> str:
         if not renames:
             return f"- {fallback}\n"
         return "".join(
-            f"- `{clean_filename(old)}` → `{clean_filename(new)}`\n"
+            f"- `{Path(old).name}` → `{Path(new).name}`\n"
             for old, new in renames
         )
 

@@ -4,16 +4,16 @@ category:
   - changelog
 log-scope: general
 modified: 2026-05-15
-UUID: 286e23c1-a5b3-40b7-bb4b-daa9d738b2d6
+UUID: d269d30f-03ec-46b4-bca1-a4a67336a947
 commit-sha: 
-files-modified: 3
-files-created: 4
+files-modified: 10
+files-created: 1
 files-archived: 0
 tags:
   - archivist-cli
 ---
 
-# Docs Update in Prep for Major Feature Development — 2026-05-15
+# Logging Augmentation Prep — 2026-05-15
 
 ## Overview
 
@@ -21,28 +21,29 @@ tags:
 |-------|-------|
 | Date | 2026-05-15 |
 | Commit SHA | [fill in after commit] |
-| Files Added | 4 |
-| Files Modified | 3 |
+| Files Added | 1 |
+| Files Modified | 10 |
 | Files Archived | 0 |
 
 ## Changes
 
 ### Files Modified
-- `.obsidian/appearance.json`: new themes
-- `docs/ROADMAP/LOGGING_AUGMENTATION_PLAN.md`: updated logging plan to include `formatter.py`
-- `docs/ARCHIVE/CHANGELOG-2026-05-15-22fe0cb.md` *(renamed from `docs/ARCHIVE/CHANGELOG-2026-05-15.md`)*: backfilled commit hash from prior commit
+- `.obsidian/app.json`: set Obsidian to display all file types in the navigator
+- `archivist/commands/frontmatter/remove.py`: templater support loose end
+- `archivist/commands/frontmatter/rename.py`: templater support loose end
+- `archivist/commands/manifest.py`: removed `clean_filename`
+- `archivist/formatter.py`:
+  - Layer 0 of [[LOGGING_AUGMENTATION_PLAN]]
+  - added new `SUCCESS` logging level
+  - added `ArchivistTerminalFormatter`, `ArchivistFileFormatter`, `ArchivistStreamHandler` methods
+- `docs/ARCHIVE/CHANGELOG-2026-05-15.md`: [description]
+- `docs/ROADMAP/LOGGING_AUGMENTATION_PLAN.md`: final edits, adding `--debug` as alias for `--verbose`
+- `docs/ROADMAP/TEMPLATER_SUPPORT/TEMPLATER_IMPLEMENTATION_STATUS.md`: updated to reflect full completion of Phase 1
+- `pyproject.toml`: version bump
+- `tests/integration/test_frontmatter_commands.py`: templater support loose end
 
 ### New Files Created
-- `.obsidian/snippets/full-pane-width.css`: for Obsidian UI
-- `.obsidian/types.json`:
-  - fuck if I know
-  - this is Obsidian doing janky-ass shit under the hood
-- `docs/ROADMAP/TEMPLATER_SUPPORT/TEMPLATER_SUPPORT_PLAN.md`:
-  - brought back this file due to loose ends
-  - loose ends need to be tied up before logging augmentation can begin
-- `docs/ROADMAP/TEMPLATER_SUPPORT/TEMPLATER_IMPLEMENTATION_STATUS.md`:
-  - current status of templater implementation
-  - provides overview for addressing loose ends
+- `docs/ARCHIVE/CHANGELOG-2026-05-15-71d94f8.md`: backfilled commit hash from prior commit
 
 ### Files Removed / Archived
 - No files archived
@@ -51,11 +52,13 @@ tags:
 <!-- archivist:auto-end -->
 ## Notes
 
-docs: updates in prep for major feature development
+feat: logging augmentation prep
 
-- returned `TEMPLATER_SUPPORT_PLAN` to tie up loose ends
-- revised logging augmentation plan
-- general project maintenance
+- finalized templater support integration
+- removed `clean_filename` from `manifest.py`
+- updated logging augmentation plan with final details
+- updated `formatter.py` with a custom log level and three new methods to 
+    support the upcoming logging augmentation implementation
 
 ---
 

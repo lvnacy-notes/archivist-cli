@@ -266,6 +266,47 @@ class TestFrontmatterRemove:
             "dry_run=True is not a suggestion. Nothing should have changed on disk."
         )
 
+    def test_preserves_templater_expressions_when_removing_other_property(
+        self, git_repo, monkeypatch, args
+    ):
+        """
+        When removing a property, don't corrupt Templater expressions in other properties.
+        This is the whole reason for the mask/restore cycle.
+        """
+        monkeypatch.chdir(git_repo.path)
+        note = git_repo.path / "note.md"
+        # Expression in 'created' should survive intact removal of 'status'
+        fm_with_expr = "status: draft\ncreated: <% tp.date.now(\"YYYY-MM-DD\") %>"
+        note.write_text(_note(fm=fm_with_expr), encoding="utf-8")
+
+        run_remove(args(property="status"))
+
+        content = _read(note)
+        # Status should be gone
+        assert "status:" not in content
+        # Expression should be preserved verbatim
+        assert '<% tp.date.now("YYYY-MM-DD") %>' in content
+
+    def test_removes_property_with_yaml_special_chars_in_other_values(
+        self, git_repo, monkeypatch, args
+    ):
+        """
+        Ensure removal works correctly when other properties contain YAML-sensitive
+        characters that would normally require masking (like { } : # in Templater expressions).
+        """
+        monkeypatch.chdir(git_repo.path)
+        note = git_repo.path / "note.md"
+        # This would normally break YAML parsing if we didn't mask first
+        fm_with_expr = "status: draft\nconfig: <% { \"key\": \"value\" } %>"
+        note.write_text(_note(fm=fm_with_expr), encoding="utf-8")
+
+        run_remove(args(property="status"))
+
+        content = _read(note)
+        assert "status:" not in content
+        # Expression with curly braces should be untouched
+        assert '{ "key": "value" }' in content
+
 
 # ===========================================================================
 # frontmatter rename
@@ -374,6 +415,51 @@ class TestFrontmatterRename:
 
         with pytest.raises(SystemExit):
             run_rename(args(property="status", new_name="status"))
+
+    def test_preserves_templater_expressions_through_rename(
+        self, git_repo, monkeypatch, args
+    ):
+        """
+        Renaming a property key shouldn't corrupt Templater expressions in any values.
+        The mask/restore cycle ensures this.
+        """
+        monkeypatch.chdir(git_repo.path)
+        note = git_repo.path / "note.md"
+        fm_with_expr = "status: draft\ntitle: <% tp.file.title %>"
+        note.write_text(_note(fm=fm_with_expr), encoding="utf-8")
+
+        run_rename(args(property="status", new_name="state"))
+
+        content = _read(note)
+        # Key should be renamed
+        assert "state: draft" in content
+        assert "status:" not in content
+        # Expression in title should be preserved exactly
+        assert "<% tp.file.title %>" in content
+
+    def test_does_not_partially_replace_expression_containing_property_name(
+        self, git_repo, monkeypatch, args
+    ):
+        """
+        When renaming 'tag' to 'label', don't accidentally replace 'tag' inside
+        the expression <% tp.date.now(\"tag-format\") %>.
+        Masking prevents this by replacing the entire expression with a sentinel.
+        """
+        monkeypatch.chdir(git_repo.path)
+        note = git_repo.path / "note.md"
+        # 'tag' appears both as a key and inside the expression value
+        fm_with_expr = "tag: <% tp.date.now(\"tag-format\") %>"
+        note.write_text(_note(fm=fm_with_expr), encoding="utf-8")
+
+        run_rename(args(property="tag", new_name="label"))
+
+        content = _read(note)
+        # Key should be renamed
+        assert "label:" in content
+        assert "tag:" not in content
+        # Expression should remain unchanged — 'tag' inside it should NOT be renamed
+        assert 'tp.date.now("tag-format")' in content
+        assert 'tp.date.now("label-format")' not in content
 
 
 # ===========================================================================

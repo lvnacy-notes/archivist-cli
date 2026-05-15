@@ -18,7 +18,7 @@ tags:
 "worked nights as custodian of a high school."
 >3. One who has care or custody, as of some public building; a keeper or superintendent.
 
-This design document provides the framework for replacing Archivist's ad-hoc terminal output layer with a Custodian: a coherent, structured logging strategy. The Custodian manages the ledger (`ledger = logging.getLogger("custodian")`) at the top level in `cli,.py`, and manages `logs` throughout Archivist via `output.py` (`log = logging.getLogger("custodian")). Rather than cleaning bathrooms, the Custodian is Archivist's professional intern, flagging internal operations and raising them to the operator's awareness with Archivist's standard spunk.
+This design document provides the framework for replacing Archivist's ad-hoc terminal output layer with a Custodian: a coherent, structured logging strategy. The Custodian manages the ledger (`ledger = logging.getLogger("archivist")`) at the top level in `cli,.py`, and manages `logs` throughout Archivist via `output.py` (`log = logging.getLogger("archivist")`). Rather than cleaning bathrooms, the Custodian is Archivist's professional intern, flagging internal operations and raising them to the operator's awareness with Archivist's standard spunk.
 
 ---
 
@@ -112,13 +112,13 @@ The five existing output functions remain as the public API. Internally, each on
 import logging
 from archivist.formatter import SUCCESS  # the custom level
 
-log = logging.getLogger("custodian")
+log = logging.getLogger("archivist")
 
 def progress(msg: str) -> None:
     log.debug(msg)           # underlying log at DEBUG
 
 def success(msg: str) -> None:
-    log.info(SUCCESS, msg)
+    log.log(SUCCESS, msg)
 
 def warning(msg: str) -> None:
     log.warning(msg)
@@ -152,15 +152,16 @@ def _configure_logging(args: argparse.Namespace) -> None:
     Set up the custodian logger based on CLI flags.
     Called once, before any command module is imported or run.
     """
-    ledger = logging.getLogger("custodian")
+    ledger = logging.getLogger("archivist")
     ledger.setLevel(logging.DEBUG)  # capture everything at the logger level
 
     # Terminal handler — level depends on verbosity flags
+    # --verbose and --debug are the same argument; both map to args.verbose
     terminal = ArchivistStreamHandler()
     terminal.setFormatter(ArchivistTerminalFormatter())
     if getattr(args, "quiet", False):
         terminal.setLevel(logging.ERROR)
-    elif getattr(args, "verbose", False):
+    elif getattr(args, "verbose", False):  # --verbose / --debug
         terminal.setLevel(logging.DEBUG)
     else:
         terminal.setLevel(logging.INFO)
@@ -180,10 +181,13 @@ def _configure_logging(args: argparse.Namespace) -> None:
 Three new flags on the root parser (not per-subcommand — they apply globally):
 
 ```
---quiet       Suppress all output except errors
---verbose     Enable per-file debug output
---log-file    Write full debug log to a file at this path
+--quiet          Suppress all output except errors
+--verbose        Enable per-file debug output
+--debug          Alias for --verbose
+--log-file       Write full debug log to a file at this path
 ```
+
+`--debug` and `--verbose` are registered as a single argument with two names (`add_argument("--verbose", "--debug", ...)`), so both map to `args.verbose`. They are identical in behavior; the alias exists because `--debug` is more honest about what it does and developers will reach for it first.
 
 These go on the root `parser`, not on subparsers, so they're available to every command without touching the per-subcommand parser definitions.
 
@@ -211,7 +215,7 @@ Exactly what runs today. `progress()` prints to stdout, `success()` prints with 
 
 Only `error()` output reaches the terminal. Useful for scripting, cron jobs, any context where you care about failures but not the play-by-play.
 
-### `--verbose`
+### `--verbose` / `--debug`
 
 Currently, `progress()` mixes structural messages ("Scanning 47 file(s)...") with per-file noise ("  [dry-run] Would add 'status' to: notes/foo.md"). In verbose mode, the per-file lines can be promoted from a simple `progress()` call to an explicit `_log.debug()` call so they only appear at `--verbose`. This requires touching a few lines in the command modules, but only to change `progress(f"  [dry-run] ...")` to `_log.debug(...)` — the output content stays.
 
@@ -257,14 +261,14 @@ This is where Templater's "unresolvable expression" warnings become genuinely us
 
 **Phase 1 — single PR:**
 
-1. Add `SUCCESS`, `ArchivistTerminalFormatter`, `ArchivistFileFormatter`, `_ArchivistStreamHandler` to `formatter.py`
+1. Add `SUCCESS`, `ArchivistTerminalFormatter`, `ArchivistFileFormatter`, `ArchivistStreamHandler` to `formatter.py`
 2. Rewire `output.py` to pure logger facade
 3. Add `_configure_logging()` and three root flags to `cli.py`
 4. Audit and replace raw `print()` calls in all utility modules with the appropriate output functions
 
 **Phase 2 — follow-up, piecemeal:**
 
-1. Audit and replace raw `print()` calls in `changelog.py`, `changelog_base.py`, `library.py` etc. with the appropriate output functions
+1. Audit and replace raw `print()` calls in `changelog_base.py`, `library.py` etc. with the appropriate output functions
 2. Demote noisy per-file `progress()` calls to `log.debug()` directly in command modules
 
 The Phase 1 PR already improves the situation significantly — `--quiet` works for everything going through `output.py`. Phase 2 is what makes it airtight for the modules currently bypassing the output layer entirely.

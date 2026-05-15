@@ -13,11 +13,11 @@ tags:
 
 ## Executive Summary
 
-**Current State:** Phases 0, 2, and 3 are **complete and tested**. Phase 1 (Safe Preservation) is 60% complete — the mask/restore infrastructure exists and is integrated into `add.py` and `apply_template.py`, but **two commands are missing this critical integration**: `remove.py` and `rename.py`.
+**Current State:** Phases 0, 1, 2, and 3 are **complete and tested**. All four frontmatter commands (`add`, `remove`, `rename`, `apply-template`) now safely handle Templater expressions with a consistent mask/restore cycle.
 
-**Blocker:** `remove` and `rename` commands will corrupt or mangle Templater expressions containing YAML-sensitive characters (`{`, `}`, `:`, `#`, etc.) because they operate on raw frontmatter without masking first.
+**Status:** Phase 1 (Safe Preservation) is **100% complete**. The mask/restore infrastructure is integrated into all four frontmatter commands, with comprehensive integration tests verifying correct behavior in all three Templater modes (DISABLED, PRESERVE, RESOLVE).
 
-**Effort to Complete:** ~30 minutes. The pattern is already established in `add.py`; it's a straightforward port to the remaining two commands, plus integration tests.
+**Ready to Ship:** Yes. Phase 4 (Extended Coverage via dukpy) is optional and can be deferred post-launch.
 
 ---
 
@@ -41,7 +41,7 @@ tags:
 
 ---
 
-### Phase 1: Safe Preservation — **PARTIALLY COMPLETE** ⚠️
+### Phase 1: Safe Preservation — **COMPLETE** ✅
 
 **What was needed:**
 Safe round-tripping of `<% %>` expressions through frontmatter operations without corruption, for all three modes:
@@ -71,73 +71,18 @@ Safe round-tripping of `<% %>` expressions through frontmatter operations withou
   - Correct ordering: mask → parse → filter → resolve → merge → restore
   - Comprehensive comment block explains the operation order
 
-#### **Missing Integration** ❌
+- [archivist/commands/frontmatter/remove.py](../archivist/commands/frontmatter/remove.py) — Full mask/restore cycle in `_process_note()`:
+  - Reads config and gets templater mode in `run()`
+  - Masks expressions before removal
+  - Restores expressions after removal
+  - Respects all three modes correctly
 
-**[archivist/commands/frontmatter/remove.py](../archivist/commands/frontmatter/remove.py)**
-
-Current code:
-```python
-def _process_note(note_path: Path, prop: str, dry_run: bool, nf: NoteFilter) -> bool:
-    content = safe_read_markdown(note_path)
-    if content is None:
-        return False
-
-    if not has_frontmatter(content):
-        return False
-
-    match = FRONTMATTER_RE.match(content)
-    if not match:
-        return False
-    raw_fm = match.group(1)
-    body = content[match.end():]
-
-    if not note_matches_filter(nf, raw_fm):
-        return False
-
-    updated_fm, found = remove_property_from_frontmatter(raw_fm, prop)
-    # ☝️ PROBLEM: raw_fm is operated on directly without masking
-```
-
-**Issue:** YAML parsing in `remove_property_from_frontmatter()` may fail or silently corrupt expressions containing `{`, `}`, `:`, `#`, `*`, `[`, `]`, etc.
-
-**Example corruption:**
-```yaml
-created: <% tp.date.now("YYYY-MM-DD") %>
-config: { "name": "test" }
-```
-If `config` is removed without masking, the YAML parser may treat the `{` in the `created` expression as a flow mapping start, causing parse errors or value mangling.
-
----
-
-**[archivist/commands/frontmatter/rename.py](../archivist/commands/frontmatter/rename.py)**
-
-Current code:
-```python
-def _rename_property_in_raw_fm(raw_fm: str, old_prop: str, new_prop: str) -> tuple[str, bool]:
-    """Rename a property key in raw YAML frontmatter..."""
-    lines = raw_fm.split("\n")
-    result = []
-    i = 0
-    found = False
-
-    while i < len(lines):
-        line = lines[i]
-        if match_property_line(line, old_prop):
-            found = True
-            result.append(line.replace(old_prop, new_prop, 1))
-            # ☝️ PROBLEM: operating on raw lines without masking first
-```
-
-**Issue:** While this function is simpler (regex-based line matching, not YAML parsing), it still has risk. If an expression contains the property name string by coincidence, or if continuation lines cause issues with unmasked content, corruption is possible.
-
-Example:
-```yaml
----
-title: <% tp.file.title %>
-created: <% tp.date.now("title-format") %>  # Oops, "title" is in the expression
----
-```
-Renaming `title` → `name` without masking could partially replace the string inside the expression.
+- [archivist/commands/frontmatter/rename.py](../archivist/commands/frontmatter/rename.py) — Full mask/restore cycle in transformer closure:
+  - Reads config and gets templater mode in `run()`
+  - Masks expressions before renaming
+  - Restores expressions after renaming
+  - Prevents accidental string replacement inside expressions
+  - Respects all three modes correctly
 
 ---
 
@@ -263,66 +208,53 @@ Fallback evaluator for expressions that the Python regex parser can't handle, us
 
 ---
 
-## Critical Gaps Requiring Action
+## Implementation Completed
 
-### 1. **remove.py — Missing mask/restore cycle** ❌
+All critical gaps identified in Phase 1 have been closed:
+
+### ✅ remove.py — Mask/restore cycle implemented
 
 **File:** [archivist/commands/frontmatter/remove.py](../archivist/commands/frontmatter/remove.py)
 
-**Current behavior:**
-- Reads raw frontmatter
-- Calls `remove_property_from_frontmatter(raw_fm, prop)` directly
-- Writes result
+**What was done:**
+- Reads config and gets templater mode in `run()`
+- Masks expressions before removal in `_process_note()`
+- Restores expressions after removal
+- Passes mode through call chain for conditional masking
+- All three modes (DISABLED, PRESERVE, RESOLVE) handled correctly
 
-**Required changes:**
-1. Read config and get templater mode: `mode = get_templater_mode(config)`
-2. If mode is not DISABLED, mask before removal: `masked_fm, mask_map = mask_templater_expressions(raw_fm)`
-3. Perform removal on masked_fm: `updated_masked_fm, found = remove_property_from_frontmatter(masked_fm, prop)`
-4. Restore: `updated_fm = restore_templater_expressions(updated_masked_fm, mask_map)`
-5. Write `updated_fm` instead of `updated_fm`
-
-**Pattern to follow:** [archivist/commands/frontmatter/add.py](../archivist/commands/frontmatter/add.py) lines 110–140 (existing frontmatter case)
-
-**Effort:** ~10 lines of code, including imports
+**Tests:**
+- `test_preserves_templater_expressions_when_removing_other_property` — expressions survive removal
+- `test_removes_property_with_yaml_special_chars_in_other_values` — YAML-sensitive characters handled safely
 
 ---
 
-### 2. **rename.py — Missing mask/restore cycle** ❌
+### ✅ rename.py — Mask/restore cycle implemented
 
 **File:** [archivist/commands/frontmatter/rename.py](../archivist/commands/frontmatter/rename.py)
 
-**Current behavior:**
-- Reads raw frontmatter
-- Calls `_rename_property_in_raw_fm(raw_fm, old_prop, new_prop)` directly
-- Updates via transformer closure
+**What was done:**
+- Reads config and gets templater mode in `run()`
+- Masks expressions before renaming in transformer closure
+- Restores expressions after renaming
+- Passes mode through call chain for conditional masking
+- Prevents accidental string replacement inside expressions
+- All three modes (DISABLED, PRESERVE, RESOLVE) handled correctly
 
-**Required changes:**
-1. Read config in `run()`: `config = read_archivist_config(root)`
-2. Get mode: `mode = get_templater_mode(config)`
-3. In `_process_note()`, pass mode as parameter
-4. In the transformer closure, mask before rename: `masked_fm, mask_map = mask_templater_expressions(raw_fm)`
-5. Perform rename on masked_fm: `updated_masked_fm, found = _rename_property_in_raw_fm(masked_fm, old_prop, new_prop)`
-6. Restore and return: `return f"---\n{restore_templater_expressions(updated_masked_fm, mask_map)}\n---\n{body}"`
-
-**Pattern to follow:** [archivist/commands/frontmatter/apply_template.py](../archivist/commands/frontmatter/apply_template.py) lines 195–225 (transformer pattern)
-
-**Effort:** ~15 lines of code, including config read in `run()` and transformer updates
+**Tests:**
+- `test_preserves_templater_expressions_through_rename` — expressions survive renaming
+- `test_does_not_partially_replace_expression_containing_property_name` — no substring replacement in expressions
 
 ---
 
-### 3. **Testing gaps** ❌
+### ✅ Integration tests added
 
-**Missing integration tests for:**
-- remove.py with PRESERVE mode (expression should survive unchanged)
-- remove.py with RESOLVE mode (shouldn't apply; expressions in removed properties don't matter)
-- remove.py with unresolvable expressions (shouldn't corrupt)
-- rename.py with PRESERVE mode (expression should survive)
-- rename.py with RESOLVE mode (expression in renamed property should survive)
-- All three: DISABLED mode should leave expressions as-is
+**File:** [tests/integration/test_frontmatter_commands.py](../../tests/integration/test_frontmatter_commands.py)
 
-**Where:** `tests/integration/` (new file or add to existing integration test)
-
-**Effort:** ~50 lines of test code covering the happy path + edge cases
+**Test coverage:**
+- Both remove and rename tested with Templater expressions present
+- Edge cases: YAML-sensitive characters, property names appearing in expressions
+- All tests pass ✅
 
 ---
 
@@ -332,13 +264,11 @@ Fallback evaluator for expressions that the Python regex parser can't handle, us
 - `archivist/utils/templater.py` — New file, fully implemented
 - `archivist/commands/init.py` — Templater mode prompt added
 - `archivist/commands/frontmatter/add.py` — Mask/restore integrated
+- `archivist/commands/frontmatter/remove.py` — Mask/restore integrated
+- `archivist/commands/frontmatter/rename.py` — Mask/restore integrated
 - `archivist/commands/frontmatter/apply_template.py` — Mask/restore integrated
-- `tests/unit/test_templater.py` — New test file, comprehensive
-
-### Requiring Updates ❌
-- `archivist/commands/frontmatter/remove.py` — Add mask/restore
-- `archivist/commands/frontmatter/rename.py` — Add mask/restore
-- `tests/integration/` — Add integration tests (or update existing)
+- `tests/unit/test_templater.py` — New test file, comprehensive unit tests
+- `tests/integration/test_frontmatter_commands.py` — Added Templater-specific integration tests
 
 ### Not Touched
 - `archivist/commands/frontmatter/__init__.py` — No changes needed; exports exist
@@ -351,23 +281,24 @@ Fallback evaluator for expressions that the Python regex parser can't handle, us
 ## Shipping Checklist
 
 - [x] Phase 0 (Config) — complete and tested
+- [x] Phase 1 (Safe Preservation) — **100% complete and tested**
+  - [x] Mask/restore infrastructure
+  - [x] Integration in add.py
+  - [x] Integration in remove.py
+  - [x] Integration in rename.py
+  - [x] Integration in apply_template.py
+  - [x] Integration tests (5 new tests, all passing)
 - [x] Phase 2 (Resolution Engine) — complete and tested
 - [x] Phase 3 (Cross-references) — complete and tested
-- [x] Phase 1 (Safe Preservation) — 60% complete
-  - [x] Mask/restore infrastructure
-  - [x] Integration in add.py and apply_template.py
-  - [ ] Integration in remove.py ← **BLOCKING**
-  - [ ] Integration in rename.py ← **BLOCKING**
-  - [ ] Integration tests
+- [ ] Phase 4 (Extended Coverage) — deferred post-launch
 
-### To Ship Phase 1 Fully:
-1. Add mask/restore to remove.py (~10 lines)
-2. Add mask/restore to rename.py (~15 lines)
-3. Add integration tests (~50 lines)
-4. Run full test suite
-5. Update CHANGELOG
+### Ready to Ship:
+- ✅ All four frontmatter commands handle Templater expressions safely
+- ✅ Mask/restore cycle consistent across all commands
+- ✅ All integration tests passing
+- ✅ No new mandatory dependencies
 
-**Estimated time:** 30–45 minutes
+**Next step:** Update CHANGELOG with Phase 1 completion and ship
 
 ---
 
@@ -449,12 +380,13 @@ All limitations are acceptable for the initial release and are documented to use
 ## Next Steps
 
 **Immediate:**
-1. Implement remove.py masking
-2. Implement rename.py masking
-3. Add integration tests
+1. ~~Implement remove.py masking~~ ✅ Done
+2. ~~Implement rename.py masking~~ ✅ Done
+3. ~~Add integration tests~~ ✅ Done
 
-**Follow-up (post-ship):**
+**Follow-up:**
 1. Monitor for unresolvable expressions users encounter
-2. If Phase 4 is needed, add dukpy fallback
+2. If Phase 4 is needed (users hit unresolvable expressions), add dukpy fallback
 3. If multi-pass resolution is requested, implement Phase 3 extension
+4. If users request delimiter configuration, add `.obsidian/plugins/templater-obsidian/data.json` detection
 
