@@ -10,6 +10,12 @@ from archivist.utils.config import (
     get_module_type,
     read_archivist_config,
 )
+from archivist.utils.output import (
+    error,
+    progress,
+    success,
+    warning
+)
 from archivist.utils.rename_helpers import (
     GitChanges,
     is_cross_dir_move,
@@ -300,16 +306,16 @@ def report_changes(
     """
     total = len(changes["A"]) + len(modified) + len(true_deleted)
     if total == 0:
-        print("  ⚠️  No staged changes found in the diff — changelog will be empty")
+        warning("No staged changes found in the diff — changelog will be empty")
     else:
-        print(
+        progress(
             f"  📋 Diff resolved: "
             f"{len(changes['A'])} added  |  "
             f"{len(modified)} modified  |  "
             f"{len(true_deleted)} archived"
         )
     if changes["R"]:
-        print(f"     ↳ {len(changes['R'])} rename(s) detected")
+        progress(f"     ↳ {len(changes['R'])} rename(s) detected")
 
 
 def write_changelog(output_path: Path, content: str, existing: bool) -> None:
@@ -328,11 +334,11 @@ def write_changelog(output_path: Path, content: str, existing: bool) -> None:
     manifest subcommand.
     """
     verb = "Updating" if existing else "Creating"
-    print(f"  ✏️  {verb}: {output_path}")
+    progress(f"  ✏️  {verb}: {output_path}")
     try:
         output_path.write_text(content, encoding="utf-8")
     except OSError as e:
-        print(f"❌  Failed to write changelog: {e}", file=sys.stderr)
+        error(f"Failed to write changelog: {e}")
         sys.exit(1)
     verb_past = "updated" if existing else "written"
-    print(f"✓ Changelog {verb_past}: {output_path}")
+    success(f"Changelog {verb_past}: {output_path}")

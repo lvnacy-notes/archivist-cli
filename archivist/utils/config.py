@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from archivist.utils.output import error
+
 
 # Known Apparatus module types
 APPARATUS_MODULE_TYPES = ["story", "publication", "library", "vault", "general"]
@@ -153,7 +155,7 @@ def read_archivist_config(git_root: Path) -> dict[str, str | list[str]] | None:
         data: dict[str, str | list[str]] | None = yaml.safe_load(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except yaml.YAMLError as e:
-        print(f"❌  Could not parse .archivist config: {e}", file=sys.stderr)
+        error(f"Could not parse .archivist config: {e}")
         return {}
 
 
@@ -247,10 +249,9 @@ def load_changelog_plugin(plugin_path: Path) -> types.ModuleType:
     try:
         spec = importlib.util.spec_from_file_location(_MODULE_NAME, plugin_path)
         if spec is None or spec.loader is None:
-            print(
-                f"❌  Couldn't load changelog plugin at { plugin_path } — "
-                "importlib returned no spec. Is it actually a Python file?",
-                file = sys.stderr,
+            error(
+                f"Couldn't load changelog plugin at {plugin_path} — "
+                "importlib returned no spec. Is it actually a Python file?"
             )
             sys.exit(1)
 
@@ -260,26 +261,23 @@ def load_changelog_plugin(plugin_path: Path) -> types.ModuleType:
 
     except SyntaxError as e:
         sys.modules.pop(_MODULE_NAME, None)  # don't leave poisoned None in the cache
-        print(
-            f"❌  Syntax error in changelog plugin { plugin_path }:\n"
-            f"    {e}",
-            file = sys.stderr,
+        error(
+            f"Syntax error in changelog plugin {plugin_path}:\n"
+            f"    {e}"
         )
         sys.exit(1)
     except Exception as e:
         sys.modules.pop(_MODULE_NAME, None)  # same — clean up your shit
-        print(
-            f"❌  Failed to load changelog plugin { plugin_path }:\n"
-            f"    {e}",
-            file = sys.stderr,
+        error(
+            f"Failed to load changelog plugin {plugin_path}:\n"
+            f"    {e}"
         )
         sys.exit(1)
 
     if not callable(getattr(module, "run", None)):
-        print(
-            f"❌  Changelog plugin at { plugin_path } has no callable `run` function.\n"
-            "    That's the entire contract. One function. Go fix it.",
-            file = sys.stderr,
+        error(
+            f"Changelog plugin at {plugin_path} has no callable `run` function.\n"
+            "    That's the entire contract. One function. Go fix it."
         )
         sys.exit(1)
 

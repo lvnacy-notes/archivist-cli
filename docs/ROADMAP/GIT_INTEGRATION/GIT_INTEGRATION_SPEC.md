@@ -252,3 +252,5 @@ SQLite files are binary. Git tracks them but cannot diff or merge them meaningfu
 The shape of the first-run initialization flow — specifically, when and how the user configures the registry remote — is a dependency for this feature and must be resolved in the prerequisite checklist before implementation begins.
 
 **Superproject detection in `deinit`:** Step 3 of the deinit flow removes `module_bays` rows scoped to the current superproject's vault module. Detecting the superproject reliably requires `git rev-parse --show-superproject-working-tree`. This is already used in the centralized DB spec (§1.5.5); confirm it behaves correctly when called from the superproject working directory rather than from within the submodule.
+
+**Archivist Manifest**: `archivist manifest` should run `git add` under the hood when passed a path. This should be workshopped further.

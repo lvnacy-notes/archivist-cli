@@ -1,18 +1,34 @@
 # ---------------------------------------------------------------------------
 # Output helpers (shared by all changelog and manifest subcommands)
 # ---------------------------------------------------------------------------
+#
+# Thin facade over the "archivist" logger. The five public functions are the
+# stable API — their signatures and call sites are unchanged. Internally,
+# each one delegates to the logger; the ArchivistStreamHandler configured in
+# cli.py handles formatting, routing (stdout vs stderr), and verbosity tiers.
+#
+# Do NOT import this module before _configure_logging() has run in cli.py.
+# The logger will happily accept records before handlers are attached, but
+# they'll vanish into the void and you'll spend twenty minutes wondering why
+# nothing is printing. Don't be that person.
 
+import logging
 import sys
 import threading
 import time
 from contextlib import contextmanager
 
+from archivist.formatter import SUCCESS
+
+ledger = logging.getLogger("archivist")
+
 
 def error(msg: str) -> None:
     """
-    Print an error message to stderr with ❌ emoji prefix.
+    Log an error message. Routes to stderr via ArchivistStreamHandler.
+    ❌ prefix is applied by ArchivistTerminalFormatter.
     """
-    print(f"❌  {msg}", file=sys.stderr)
+    ledger.error(msg)
 
 
 def get_action_verb(dry_run: bool, present: str, past: str) -> str:
@@ -32,23 +48,27 @@ def get_action_verb(dry_run: bool, present: str, past: str) -> str:
 
 def print_dry_run_header() -> None:
     """
-    Print the dry-run header message to indicate no writes will occur.
+    Log the dry-run header at INFO level so it respects --quiet.
     """
-    print("=== This is a DRY RUN — no files written ===")
+    ledger.info("=== This is a DRY RUN — no files written ===")
     
 
 def progress(msg: str) -> None:
     """
-    Print a progress message to stdout for informational output.
+    Log a progress/informational message at INFO level.
+    In --verbose mode, callers that want truly noisy per-file output should
+    call log.debug() directly instead of going through this function — that
+    keeps the default tier clean without --quiet having to nuke everything.
     """
-    print(msg)
+    ledger.info(msg)
 
 
 def success(msg: str) -> None:
     """
-    Print a success message to stdout with ✅ emoji prefix.
+    Log a success message at the custom SUCCESS level (25).
+    ✅ prefix and GREEN styling applied by ArchivistTerminalFormatter.
     """
-    print(f"✅ {msg}")
+    ledger.log(SUCCESS, msg)
 
 
 @contextmanager
@@ -91,6 +111,7 @@ def spinner(message: str = "Working"):
 
 def warning(msg: str) -> None:
     """
-    Print a warning message to stderr with ⚠️ emoji prefix.
+    Log a warning at WARNING level. Routes to stderr via ArchivistStreamHandler.
+    ⚠️ prefix applied by ArchivistTerminalFormatter.
     """
-    print(f"⚠️  {msg}", file=sys.stderr)
+    ledger.warning(msg)

@@ -100,7 +100,7 @@ This is a split stdout/stderr handler. `progress()` and `success()` go to st
 
 Python's standard `logging` module handles levels, handlers, formatters, and routing. It's the right tool and it's already in stdlib. We are not bringing in `structlog`, `loguru`, or any other logging dependency — the problem does not require them.
 
-A single named logger: `logging.getLogger("custodian")`.
+A single named logger: `logging.getLogger("archivist")`.
 
 ### Layer 2 — `output.py` becomes a thin facade
 
@@ -112,19 +112,19 @@ The five existing output functions remain as the public API. Internally, each on
 import logging
 from archivist.formatter import SUCCESS  # the custom level
 
-log = logging.getLogger("archivist")
+ledger = logging.getLogger("archivist")
 
 def progress(msg: str) -> None:
-    log.debug(msg)           # underlying log at DEBUG
+    ledger.debug(msg)           # underlying log at DEBUG
 
 def success(msg: str) -> None:
-    log.log(SUCCESS, msg)
+    ledger.log(SUCCESS, msg)
 
 def warning(msg: str) -> None:
-    log.warning(msg)
+    ledger.warning(msg)
 
 def error(msg: str) -> None:
-    log.error(msg)
+    ledger.error(msg)
 ```
 
 The `ArchivistStreamHandler` in `formatter.py`, configured in `cli.py`'s `_configure_logging()`, handles all terminal output — including the formatting and routing. `--quiet` and `--verbose` work automatically through handler levels without `output.py` needing to know about them. No global flags, no module-level state.
@@ -149,7 +149,7 @@ from archivist.formatter import (
 
 def _configure_logging(args: argparse.Namespace) -> None:
     """
-    Set up the custodian logger based on CLI flags.
+    Set up the logger based on CLI flags.
     Called once, before any command module is imported or run.
     """
     ledger = logging.getLogger("archivist")
@@ -201,7 +201,7 @@ These go on the root `parser`, not on subparsers, so they're available to every 
 
 **Command modules** — proliferate across all commands. Some commands call `progress()`, `warning()`, etc. but this would extend this logging pattern to all.
 
-**`git.py`** — currently uses `logging.getLogger(__name__)` and `logger.error()` directly for git subprocess errors. This is correct and fine. After augmentation, those calls route through the same `custodian` logger hierarchy automatically (since `archivist.utils.git` is a child of `archivist`). No changes needed.
+**`git.py`** — currently uses `logging.getLogger(__name__)` and `logger.error()` directly for git subprocess errors. This is correct and fine. After augmentation, those calls route through the same `archivist` logger hierarchy automatically (since `archivist.utils.git` is a child of `archivist`). No changes needed.
 
 ---
 
@@ -250,7 +250,7 @@ This is where Templater's "unresolvable expression" warnings become genuinely us
 | File               | Change                                                                                                       |
 | ------------------ | ------------------------------------------------------------------------------------------------------------ |
 | `formatter.py`     | Add custom `SUCCESS` level, `ArchivistTerminalFormatter`, `ArchivistFileFormatter`, `ArchivistStreamHandler` |
-| `utils/output.py`  | Route existing functions through `logging.getLogger("custodian")`                                            |
+| `utils/output.py`  | Route existing functions through `logging.getLogger("archivist")`                                            |
 | `cli.py`           | Add `_configure_logging()`, call it in `main()`, add three root-level args                                   |
 | `commands/**/*.py` | demote per-file dry-run lines from `progress()` to `_log.debug()` for cleaner `--quiet` behavior             |
 | `utils/git.py`     | No changes — already uses stdlib logging correctly                                                           |

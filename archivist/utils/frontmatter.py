@@ -22,11 +22,12 @@
 from __future__ import annotations
 
 import re
-import sys
 from collections.abc import Callable
 from pathlib import Path
 
 import yaml
+
+from archivist.utils.output import warning
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +137,7 @@ def safe_read_markdown(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8", errors="ignore")
     except OSError as e:
-        print(f"  ⚠️  Could not read '{path}': {e}", file=sys.stderr)
+        warning(f"Could not read '{path}': {e}")
         return None
 
 
@@ -150,7 +151,7 @@ def safe_write_markdown(path: Path, content: str) -> bool:
         path.write_text(content, encoding="utf-8")
         return True
     except OSError as e:
-        print(f"  ⚠️  Could not write '{path}': {e}", file=sys.stderr)
+        warning(f"Could not write '{path}': {e}")
         return False
 
 
