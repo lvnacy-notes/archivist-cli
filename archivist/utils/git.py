@@ -10,6 +10,13 @@ import sys
 from pathlib import Path
 from typing import TypedDict
 
+from archivist.utils.output import (
+    error,
+    progress,
+    success,
+    warning
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -58,16 +65,13 @@ def ensure_staged(git_root: Path) -> None:
             capture_output=True, text=True, check=True, cwd=git_root,
         )
         if not result.stdout.strip():
-            print(
-                "❌  What the fuck am I supposed to log? Stage some files first.",
-                file=sys.stderr,
-            )
+            error("What the fuck am I supposed to log? Stage some files first.")
             sys.exit(1)
         staged_files = result.stdout.strip().splitlines()
-        print(f"  ✔  Staging check passed — {len(staged_files)} file(s) staged")
+        progress(f"  ✔  Staging check passed — {len(staged_files)} file(s) staged")
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"❌  Git error while checking staged files: {e}")
+        logger.error(f"Git error while checking staged files: {e}")
         sys.exit(1)
 
 
@@ -100,17 +104,16 @@ def ensure_staged_under(path: Path, git_root: Path) -> None:
         in_scope = [f for f in all_staged if f.startswith(scope_prefix)]
 
         if not in_scope:
-            print(
-                f"❌  Nothing staged under '{scope_prefix}'. "
-                f"Stage your edition files first.",
-                file=sys.stderr,
+            error(
+                f"Nothing staged under '{scope_prefix}'. "
+                f"Stage your edition files first."
             )
             sys.exit(1)
 
-        print(f"  ✔  Staging check passed — {len(in_scope)} file(s) staged under '{scope_prefix}'")
+        progress(f"  ✔  Staging check passed — {len(in_scope)} file(s) staged under '{scope_prefix}'")
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"❌  Git error while checking staged files: {e}")
+        logger.error(f"Git error while checking staged files: {e}")
         sys.exit(1)
 
 
@@ -244,7 +247,7 @@ def get_repo_root() -> Path:
         )
         return Path(result.stdout.strip())
     except subprocess.CalledProcessError:
-        logger.error("❌  Not inside a git repo. Are you in the right directory?")
+        logger.error("Not inside a git repo. Are you in the right directory?")
         sys.exit(1)
 
 
@@ -359,13 +362,12 @@ def prompt_out_of_scope_changes(scope_path: Path, git_root: Path) -> None:
     if not out_of_scope:
         return
 
-    print(f"\n  ⚠️  There are unstaged changes outside the scope ({scope_path}):")
-    for f in out_of_scope:
-        print(f"       {f}")
+    file_list = "\n".join(f"       {f}" for f in out_of_scope)
+    warning(f"There are unstaged changes outside the scope ({scope_path}):\n{file_list}")
     answer = input("\n  Stage these too? [y/N] ").strip().lower()
     if answer == "y":
         for f in out_of_scope:
             subprocess.run(["git", "add", f], check=True, cwd=git_root)
-        print("  📥 Staged out-of-scope changes.")
+        success("📥 Staged out-of-scope changes.")
     else:
-        print("  Skipping out-of-scope changes.")
+        progress("Skipping out-of-scope changes.")

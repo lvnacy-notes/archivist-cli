@@ -1,12 +1,44 @@
 import argparse
+import logging
 import subprocess
 from pathlib import Path
 import pytest
+
+from archivist.formatter import ArchivistTerminalFormatter, ArchivistStreamHandler
 
 
 #------------------------------------------------------------------------------
 # Fixtures
 #------------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _configure_test_logging():
+    """
+    Automatically configure logging for every test.
+    
+    Sets up ArchivistStreamHandler with ArchivistTerminalFormatter on the
+    archivist logger so that output.py's logging calls reach capsys for
+    assertion. Without this, log records are captured by pytest but don't
+    reach stdout/stderr.
+    
+    This fixture runs for every test automatically (autouse=True) and cleans
+    up after itself.
+    """
+    logger = logging.getLogger("archivist")
+    
+    # Only configure if handlers aren't already set up (e.g. by a previous test)
+    if not logger.handlers:
+        handler = ArchivistStreamHandler()
+        handler.setFormatter(ArchivistTerminalFormatter())
+        handler.setLevel(logging.DEBUG)
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+    
+    yield
+    
+    # Clean up after the test
+    logger.handlers.clear()
 
 
 @pytest.fixture

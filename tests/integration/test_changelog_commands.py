@@ -1296,9 +1296,9 @@ class TestChangelogOutOfScopePrompt:
 
         run_general(_cl_args(path="notes"))
 
-        out = capsys.readouterr().out
+        out = capsys.readouterr().err
         assert "list_me.sh" in out, (
             "Out-of-scope file was not listed in the output before the prompt. "
             "The user is being asked to stage something they can't see. "
-            "Check the print loop in prompt_out_of_scope_changes()."
+            "Check prompt_out_of_scope_changes() in git.py."
         )

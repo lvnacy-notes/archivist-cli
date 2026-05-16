@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from archivist.utils.config import build_ignore_spec
+from archivist.utils.output import error
 
 from archivist.utils.frontmatter import (
     extract_tags_from_entries,
@@ -168,7 +169,7 @@ def validate_note_filter(
 
 
 def _die(msg: str) -> None:
-    print(f"❌  {msg}", file=sys.stderr)
+    error(msg)
     sys.exit(1)
 
 

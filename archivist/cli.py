@@ -30,9 +30,13 @@ Usage:
 
 import argparse
 import importlib.metadata
+import logging
 
 from archivist.formatter import (
+    ArchivistFileFormatter,
     ArchivistHelpFormatter,
+    ArchivistStreamHandler,
+    ArchivistTerminalFormatter,
     fmt_examples,
     fmt_warning,
 )
@@ -55,6 +59,40 @@ BANNER = r"""
 """
 
 
+def _configure_logging(args: argparse.Namespace) -> None:
+    """
+    Configure the "archivist" logger based on CLI flags. Called once in
+    main(), immediately after parse_args(), before any command module runs.
+
+    The logger is set to DEBUG at the root so all records are captured —
+    the terminal handler's level determines what actually hits the screen.
+
+    --quiet:          ERROR and above only (errors, nothing else)
+    default:          INFO and above (progress, success, warnings, errors)
+    --verbose/--debug: DEBUG and above (everything, including per-file noise)
+    --log-file <path>: full DEBUG log to file regardless of terminal verbosity
+    """
+    ledger = logging.getLogger("archivist")
+    ledger.setLevel(logging.DEBUG)  # capture everything; handlers filter down
+
+    terminal = ArchivistStreamHandler()
+    terminal.setFormatter(ArchivistTerminalFormatter())
+    if getattr(args, "quiet", False):
+        terminal.setLevel(logging.ERROR)
+    elif getattr(args, "verbose", False):
+        terminal.setLevel(logging.DEBUG)
+    else:
+        terminal.setLevel(logging.INFO)
+    ledger.addHandler(terminal)
+
+    log_file = getattr(args, "log_file", None)
+    if log_file:
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(ArchivistFileFormatter())
+        ledger.addHandler(file_handler)
+
+
 def _add_note_selection_args(p: argparse.ArgumentParser, *, require_one: bool = False) -> None:
     """
     Register the four shared note-selection arguments onto a frontmatter subparser.
@@ -72,41 +110,41 @@ def _add_note_selection_args(p: argparse.ArgumentParser, *, require_one: bool = 
     )
     scope.add_argument(
         "--file",
-        default=None,
-        metavar="FILE",
-        help="Target exactly this one .md file. Cannot be combined with other selectors.",
+        default = None,
+        metavar = "FILE",
+        help = "Target exactly this one .md file. Cannot be combined with other selectors.",
     )
     scope.add_argument(
         "--path",
-        default=None,
-        metavar="PATH",
-        help="Limit the directory walk to this subtree (relative to repo root)",
+        default = None,
+        metavar = "PATH",
+        help = "Limit the directory walk to this subtree (relative to repo root)",
     )
     scope.add_argument(
         "-c",
         "--class",
-        dest="note_class",
-        default=None,
-        metavar="CLASS",
-        help="Only notes whose class frontmatter value matches (e.g. 'character')",
+        dest = "note_class",
+        default = None,
+        metavar = "CLASS",
+        help = "Only notes whose class frontmatter value matches (e.g. 'character')",
     )
     scope.add_argument(
         "--class-property",
-        default="class",
-        metavar="PROP",
-        help="Frontmatter key used to identify the class (default: class)",
+        default = "class",
+        metavar = "PROP",
+        help = "Frontmatter key used to identify the class (default: class)",
     )
     scope.add_argument(
         "--tag",
-        default=None,
-        metavar="TAG",
-        help="Only notes carrying this tag in their frontmatter",
+        default = None,
+        metavar = "TAG",
+        help = "Only notes carrying this tag in their frontmatter",
     )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="archivist",
+        prog = "archivist",
         description=(
             BANNER
             + "  Bulk-manage YAML frontmatter and generate archive documents.\n"
@@ -128,6 +166,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--version", "-V",
         action = "version",
         version = f"archivist {_version}",
+    )
+    parser.add_argument(
+        "--quiet", "-q",
+        action = "store_true",
+        default = False,
+        help = "Suppress all output except errors. Useful for scripting and cron jobs.",
+    )
+    parser.add_argument(
+        "--verbose", "--debug",
+        dest = "verbose",
+        action = "store_true",
+        default = False,
+        help = "Enable debug output. --debug is an alias because it's more honest.",
+    )
+    parser.add_argument(
+        "--log-file",
+        dest = "log_file",
+        default = None,
+        metavar = "PATH",
+        help = "Write a full debug log to this path (timestamps, all levels, no emoji).",
     )
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
     subparsers.required = True
@@ -156,8 +214,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class = ArchivistHelpFormatter,
     )
-    init_p.add_argument("--dry-run", action="store_true",
-                        help = "Preview without writing any files")
+    init_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview without writing any files"
+    )
 
 
     # -----------------------------------------------------------------------
@@ -180,7 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class = ArchivistHelpFormatter,
     )
-    fm_sub = fm_parser.add_subparsers(dest="fm_command", metavar="<subcommand>")
+    fm_sub = fm_parser.add_subparsers(dest = "fm_command", metavar = "<subcommand>")
     fm_sub.required = True
 
     # frontmatter add
@@ -294,14 +355,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--property",
         required = True,
         metavar = "PROP",
-        help="Current property name"
+        help = "Current property name"
     )
     ren_p.add_argument(
         "-n",
         "--new-name",
         required = True,
         metavar = "NEW",
-        help="New property name"
+        help = "New property name"
     )
     _add_note_selection_args(ren_p)
     ren_p.add_argument(
@@ -686,7 +747,7 @@ def build_parser() -> argparse.ArgumentParser:
     rc_parser.add_argument(
         "--dry-run",
         action = "store_true",
-        help="Preview changes without writing to disk"
+        help = "Preview changes without writing to disk"
     )
     
 
