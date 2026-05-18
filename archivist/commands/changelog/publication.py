@@ -16,21 +16,23 @@ content and descriptions in the existing changelog for that day, if present.
 """
 
 import argparse
-import sys
 from pathlib import Path
 from typing import cast
 
 from archivist.commands.changelog.changelog_base import ChangelogContext, run_changelog
 from archivist.utils import (
+    error,
     format_file_list,
     get_db_path,
     get_project_name,
     get_today,
     infer_undetected_renames,
     init_db,
+    progress,
     rename_display_path,
     render_field,
     resolve_changelog_title,
+    success,
 )
 
 
@@ -55,9 +57,8 @@ def _get_edition_shas(git_root: Path, current_uuid: str | None) -> list[tuple[st
     """
     db_path = get_db_path(git_root)
     if not db_path.exists():
-        print(
+        error(
             "  Note: No archive DB found. Run 'archivist manifest --register' to populate it.",
-            file=sys.stderr,
         )
         return []
     conn = init_db(db_path)
@@ -126,14 +127,14 @@ def _analyse_publication(ctx: ChangelogContext) -> None:
 def _mark_shas_post_write(ctx: ChangelogContext) -> None:
     edition_shas: list[tuple[str, str]] = cast(list[tuple[str, str]], ctx.data["edition_shas"])
     if ctx.args.dry_run:
-        print(
+        progress(
             f"  Would mark {len(edition_shas)} SHA(s) as included in DB "
             f"(UUID: {ctx.changelog_uuid[:8]}...)"
         )
         return
     _mark_shas_included(ctx.git_root, edition_shas, ctx.changelog_uuid)
     if edition_shas:
-        print(f"✓ {len(edition_shas)} SHA(s) marked as included in archive DB")
+        success(f"✓ {len(edition_shas)} SHA(s) marked as included in archive DB")
 
 
 # ---------------------------------------------------------------------------
@@ -261,16 +262,16 @@ def _build_body(ctx: ChangelogContext) -> str:
 def _print_summary(ctx: ChangelogContext) -> None:
     edition_shas: list[tuple[str, str]] = cast(list[tuple[str, str]], ctx.data["edition_shas"])
     remaining_added: list[str] = cast(list[str], ctx.data["remaining_added"])
-    print(f"  Project      : {get_project_name(ctx.git_root)}")
-    print(f"  Edition SHAs : {len(edition_shas)} (not yet in any changelog)")
-    print(
+    progress(f"  Project      : {get_project_name(ctx.git_root)}")
+    progress(f"  Edition SHAs : {len(edition_shas)} (not yet in any changelog)")
+    progress(
         f"  Changes      : {len(remaining_added)} added, "
         f"{len(ctx.modified)} modified, {len(ctx.true_deleted)} archived"
     )
     if ctx.args.commit_sha:
-        print(f"  SHA          : {ctx.args.commit_sha}")
+        progress(f"  SHA          : {ctx.args.commit_sha}")
     else:
-        print("  SHA          : (staged — backfilled by post-commit hook)")
+        progress("  SHA          : (staged — backfilled by post-commit hook)")
 
 
 # ---------------------------------------------------------------------------

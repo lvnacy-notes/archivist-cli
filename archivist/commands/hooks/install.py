@@ -16,9 +16,14 @@ These two commands do not overlap. `install` never touches a local repo.
 import argparse
 import os
 import stat
-import sys
 from pathlib import Path
 
+from archivist.utils import (
+    print_dry_run_header,
+    progress,
+    success,
+    warning,
+)
 
 # ---------------------------------------------------------------------------
 # Hook script templates
@@ -268,13 +273,13 @@ def _write_hook(hooks_dir: Path, name: str, content: str, dry_run: bool) -> None
     hook_path = hooks_dir / name
 
     if dry_run:
-        print(f"  [dry-run] Would write: {hook_path}")
+        progress(f"  [dry-run] Would write: {hook_path}")
         return
 
     hooks_dir.mkdir(parents=True, exist_ok=True)
     hook_path.write_text(content, encoding="utf-8")
     hook_path.chmod(hook_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    print(f"  ✅ Written: {hook_path}")
+    success(f"  Written: {hook_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +296,7 @@ def install_hooks_global(dry_run: bool = False) -> None:
     """
     # --- Global templates ---
     global_hooks = Path.home() / ".git-templates" / "hooks"
-    print(f"\n  Installing global hooks → {global_hooks}")
+    progress(f"\n  Installing global hooks → {global_hooks}")
     _write_hook(global_hooks, "pre-commit", PRE_COMMIT_HOOK, dry_run)
     _write_hook(global_hooks, "post-commit", POST_COMMIT_HOOK, dry_run)
 
@@ -299,8 +304,8 @@ def install_hooks_global(dry_run: bool = False) -> None:
         expected = str(Path.home() / ".git-templates")
         current = os.popen("git config --global init.templateDir").read().strip()
         if current != expected:
-            os.system(f'git config --global init.templateDir "{expected}"')
-            print(f"  ✅ Set git init.templateDir → ~/.git-templates")
+            os.system(f'git config --global init.templateDir "{ expected }"')
+            success(f"  Set git init.templateDir → ~/.git-templates")
 
 
 def install_hooks_local(git_root: Path, dry_run: bool = False) -> None:
@@ -315,7 +320,7 @@ def install_hooks_local(git_root: Path, dry_run: bool = False) -> None:
     """
     # --- Local repo (sync) ---
     hooks_dir = _resolve_hooks_dir(git_root)
-    print(f"\n  Syncing hooks → {hooks_dir}")
+    progress(f"\n  Syncing hooks → {hooks_dir}")
     _write_hook(hooks_dir, "pre-commit", PRE_COMMIT_HOOK, dry_run)
     _write_hook(hooks_dir, "post-commit", POST_COMMIT_HOOK, dry_run)
 
@@ -334,11 +339,11 @@ def run_install(args: argparse.Namespace) -> None:
     """
     dry_run = getattr(args, "dry_run", False)
     if dry_run:
-        print("=== DRY RUN — no files written ===")
-    install_hooks_global(dry_run=dry_run)
+        print_dry_run_header()
+        install_hooks_global(dry_run = dry_run)
     if not dry_run:
-        print("\n  Global hooks installed. Future clones will pick them up automatically.")
-        print("  To apply to an existing repo, run `archivist hooks sync` inside it.")
+        success("\n  Global hooks installed. Future clones will pick them up automatically.")
+        progress("  To apply to an existing repo, run `archivist hooks sync` inside it.")
 
 
 def run_sync(args: argparse.Namespace) -> None:
@@ -355,29 +360,29 @@ def run_sync(args: argparse.Namespace) -> None:
     dry_run = getattr(args, "dry_run", False)
 
     if dry_run:
-        print("=== DRY RUN — no files written ===")
+        print_dry_run_header()
 
     install_hooks_local(git_root, dry_run=dry_run)
 
     # Detect submodules and offer to sync into each one
     submodules = _get_submodule_paths(git_root)
     if submodules:
-        print(f"\n  {len(submodules)} submodule(s) detected:")
+        progress(f"\n  {len(submodules)} submodule(s) detected:")
         for sub in submodules:
-            print(f"       {sub.relative_to(git_root)}")
+            progress(f"       {sub.relative_to(git_root)}")
         answer = input("\n  Sync hooks into all submodules too? [y/N] ").strip().lower()
         if answer == "y":
             for sub in submodules:
                 try:
                     install_hooks_local(sub, dry_run=dry_run)
                 except RuntimeError as e:
-                    print(f"  ⚠️  Skipping {sub.name}: {e}", file=sys.stderr)
+                    warning(f"  Skipping {sub.name}: {e}")
             if not dry_run:
-                print("\n  Hooks synced to repo and all submodules.")
+                success("\n  Hooks synced to repo and all submodules.")
         else:
-            print("  Skipping submodules.")
+            progress("  Skipping submodules.")
             if not dry_run:
-                print("  Hooks synced to current repo only.")
+                success("  Hooks synced to current repo only.")
     else:
         if not dry_run:
-            print("\n  Hooks synced.")
+            success("\n  Hooks synced.")

@@ -16,7 +16,6 @@ user content and descriptions in the existing changelog, if present.
 
 import argparse
 from pathlib import Path
-import re
 
 from archivist.commands.changelog.changelog_base import ChangelogContext, run_changelog
 from archivist.utils import (

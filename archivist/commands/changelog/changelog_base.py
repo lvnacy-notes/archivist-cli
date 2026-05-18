@@ -48,6 +48,7 @@ from archivist.utils import (
     GitChanges,
     detect_dir_renames,
     ensure_staged,
+    error,
     extract_changelog_title,
     extract_descriptions,
     extract_frontmatter,
@@ -69,8 +70,9 @@ from archivist.utils import (
     prompt_out_of_scope_changes,
     reassign_deletions,
     report_changes,
-    resolve_changelog_title,
     spinner,
+    success,
+    warning,
     write_changelog,
 )
 
@@ -141,10 +143,10 @@ def _wait_for_save_confirmation(existing: Path, git_root: Path) -> None:
     their work; "mash enter to skip" is not a sane default here.
     """
     rel = existing.relative_to(git_root) if existing.is_absolute() else existing
-    print(f"\n  ⚠️  Existing changelog found: {rel}")
+    warning(f"\n  Existing changelog found: {rel}")
     answer = input("     Save your fucking changes, then press y to continue ... ").strip().lower()
     if answer not in ("y", "yes"):
-        print("  Aborted.")
+        progress("Aborted.")
         sys.exit(0)
 
 
@@ -383,7 +385,7 @@ def run_changelog(
         print_dry_run_header()
         print()
         print(changelog_content)
-        print(f"\n=== Would write to: {output_path} ===")
+        progress(f"\n=== Would write to: {output_path} ===")
     else:
         write_changelog(output_path, changelog_content, existing=bool(existing))
 
@@ -399,12 +401,12 @@ def run_changelog(
 
 
 def _default_summary(ctx: ChangelogContext) -> None:
-    print(f"  Project  : {get_project_name(ctx.git_root)}")
-    print(
+    progress(f"  Project  : {get_project_name(ctx.git_root)}")
+    progress(
         f"  Changes  : {len(ctx.changes['A'])} added, "
         f"{len(ctx.modified)} modified, {len(ctx.true_deleted)} archived"
     )
     if ctx.args.commit_sha:
-        print(f"  SHA      : {ctx.args.commit_sha}")
+        progress(f"  SHA      : {ctx.args.commit_sha}")
     else:
-        print("  SHA      : (staged — backfilled by post-commit hook)")
+        progress("  SHA      : (staged — backfilled by post-commit hook)")
