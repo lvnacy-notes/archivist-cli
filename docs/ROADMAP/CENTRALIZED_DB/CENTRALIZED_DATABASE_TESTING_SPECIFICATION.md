@@ -1,12 +1,23 @@
-# Archivist — Centralized Database Testing Specification
+---
+class: spec
+category:
+  - testing
+  - feature
+  - database
+  - infrastructure
+affiliations:
+modified: 2026-05-18
+version: 0.1
+related:
+  - "[[TESTING_SPECIFICATION]]"
+  - "[[CENTRALIZED_DB]]"
+  - "[[CENTRALIZED_DATABASE_SPEC]]"
+  - "[[CENTRALIZED_DATABASE_IMPLEMENTATION]]"
+tags:
+---
+
 
 > Same net. More floor space. Don't fuck it up.
-
-**Companion to:** `TESTING_SPECIFICATION.md`
-**Related Docs:** `CENTRALIZED_DATABASE_SPEC.md` and `CENTRALIZED_DATABASE_IMPLEMENTATION.md`  
-**Status:** Phase 1 In Progress — tests are added phase by phase as each implementation phase completes
-
----
 
 ## Philosophy (Inherited, with One Addition)
 

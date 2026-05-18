@@ -2,17 +2,15 @@
 class: archive
 category:
   - changelog
-log-scope: general
+affiliations:
+created:
 modified: 2026-05-17
-UUID: ad2757fd-06c1-48db-9008-c57868d313b5
-commit-sha: 
-files-modified: 12
-files-created: 0
-files-archived: 0
+version:
+status:
+related:
 tags:
   - archivist-cli
 ---
-
 # Custodian: Logging Augmentation, Phase 2 — 2026-05-17
 
 ## Overview
@@ -20,7 +18,7 @@ tags:
 | Field | Value |
 |-------|-------|
 | Date | 2026-05-17 |
-| Commit SHA | [fill in after commit] |
+| Commit SHA | 0cbe36cec6a6e1221a662fd28aa9cd293f045c73 |
 | Files Added | 0 |
 | Files Modified | 12 |
 | Files Archived | 0 |

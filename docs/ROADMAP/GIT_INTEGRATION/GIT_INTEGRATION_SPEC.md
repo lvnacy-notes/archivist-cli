@@ -1,7 +1,18 @@
-# Archivist — Git Integration Specification
-
-**Status:** Draft  
-**Version:** 0.1.0  
+---
+class: spec
+category:
+  - feature
+  - database
+affiliations:
+created:
+modified: 2026-05-18
+version: 0.1
+related:
+  - "[[GIT_INTEGRATION]]"
+  - "[[GIT_INTEGRATION_PREREQUISITES]]"
+  - "[[Drawing - git Implementation.png]]"
+tags:
+---
 **Depends on:** Centralized Database feature (must ship first)
 
 ---

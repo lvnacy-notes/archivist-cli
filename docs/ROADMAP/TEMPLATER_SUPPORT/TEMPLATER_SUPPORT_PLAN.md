@@ -1,4 +1,17 @@
-# Templater Support — Plan of Attack
+---
+class: plan
+category:
+  - feature
+  - frontmatter
+affiliations:
+modified: 2026-05-18
+version:
+related:
+  - "[[TEMPLATER_SUPPORT]]"
+  - "[[TEMPLATER_IMPLEMENTATION_STATUS]]"
+tags:
+---
+
 
 A design document for integrating Obsidian Templater expression resolution into Archivist's frontmatter commands. This is a scoped plan, not a spec — it is meant to be read, argued with, and revised before a line of implementation code gets written.
 

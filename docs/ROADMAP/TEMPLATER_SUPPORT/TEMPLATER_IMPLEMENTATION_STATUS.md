@@ -1,15 +1,19 @@
 ---
-class: planning-doc
+class: checklist
 category:
-  - implementation
+  - feature
+  - frontmatter
+affiliations:
 created: 2026-05-15
-modified: 2026-05-15
+modified: 2026-05-18
+version:
+related:
+  - "[[TEMPLATER_SUPPORT]]"
+  - "[[TEMPLATER_SUPPORT_PLAN]]"
 tags:
   - archivist
   - templater
 ---
-
-**Review of:** [TEMPLATER_SUPPORT_PLAN.md](ROADMAP/TEMPLATER_SUPPORT_PLAN.md)
 
 ## Executive Summary
 

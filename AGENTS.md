@@ -1,3 +1,6 @@
+---
+modified: 2026-05-18
+---
 # AGENTS.md
 
 Guidelines for AI agents working on this codebase.

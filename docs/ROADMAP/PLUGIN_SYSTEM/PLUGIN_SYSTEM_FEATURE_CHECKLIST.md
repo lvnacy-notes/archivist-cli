@@ -1,5 +1,17 @@
-# Archivist Plugin System — Feature Checklist
-
+---
+class: checklist
+category:
+  - feature
+  - checklist
+affiliations:
+created:
+modified: 2026-05-18
+version:
+related:
+  - "[[PLUGIN_SYSTEM_SPECIFICATION]]"
+  - "[[PLUGIN_SYSTEM]]"
+tags:
+---
 Tracking all decisions and implementation tasks from the design session.
 
 ---
