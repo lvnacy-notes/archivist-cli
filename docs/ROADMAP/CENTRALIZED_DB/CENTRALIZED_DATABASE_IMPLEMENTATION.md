@@ -1,8 +1,15 @@
-# Archivist — Centralized Database Implementation Checklist
-
-**Spec:** `CENTRALIZED_DATABASE_SPEC.md`  
-**Status:** Phase 1 In Progress
-
+---
+class: checklist
+category:
+  - feature
+  - database
+  - infrastructure
+affiliations:
+created:
+modified: 2026-05-18
+version:
+related:
+tags:
 ---
 
 ## Phase 1 — Global Registry

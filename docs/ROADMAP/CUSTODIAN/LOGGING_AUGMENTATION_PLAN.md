@@ -2,12 +2,16 @@
 class: planning-doc
 category:
   - infrastructure
+affiliations:
+created:
 modified: 2026-05-15
+version:
+status:
+related:
 tags:
   - archivist
   - custodian
 ---
-
 ## Introducing the Archivist's Custodian
 
 > [!info] **custodian** /kŭ-stō′dē-ən/

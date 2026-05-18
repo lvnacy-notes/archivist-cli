@@ -2,12 +2,16 @@
 class: planning-doc
 category:
   - infrastructure
+affiliations:
+created:
 modified: 2026-05-15
+version:
+status:
+related:
 tags:
   - archivist
   - custodian
 ---
-
 # Custodian Implementation Checklist
 
 Tracking document for the Custodian logging augmentation across both phases.

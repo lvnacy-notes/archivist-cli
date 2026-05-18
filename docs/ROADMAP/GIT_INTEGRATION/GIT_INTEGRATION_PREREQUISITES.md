@@ -1,13 +1,23 @@
-# Archivist — Git Integration Prerequisites
-
+---
+class: plan
+category:
+  - feature
+  - database
+affiliations:
+created:
+modified: 2026-05-18
+version: 0.1
+related:
+  - "[[GIT_INTEGRATION]]"
+  - "[[GIT_INTEGRATION_SPEC]]"
+  - "[[Drawing - git Implementation.png]]"
+tags:
+---
 **Purpose:** Everything that must be in place before development begins on the
 git integration feature. Some items are gaps in the Centralized Database spec or
 implementation. Some are new requirements that the git integration spec has
 surfaced. None of this is git integration implementation work — this is the
 table-setting that makes that work possible.
-
-Cross-reference: `GIT_SPEC.md`, `CENTRALIZED_DATABASE_SPEC.md`,
-`CENTRALIZED_DATABASE_IMPLEMENTATION.md`.
 
 ---
 

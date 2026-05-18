@@ -1,19 +1,28 @@
-# Archivist — Graph Feature Specification
-
-**Status:** Draft  
-**Version:** 0.1.0  
-**Authors:** LVNACY
-
------
-
+---
+class: spec
+category:
+  - feature
+  - reference
+affiliations:
+created:
+modified: 2026-05-18
+version: 0.1
+related:
+  - "[[GRAPH]]"
+tags:
+---
 ## 1. Overview
 
 This document specifies the design and behavior of Archivist’s graph feature. The goal is a system that can parse `[[wikilink]]` relationships across registered modules, persist the resulting graph structure in the centralized registry, and export a self-contained interactive HTML visualization viewable in any browser — including mobile Safari — without requiring any additional runtime, server, or application.
 
 The graph feature is a read layer over the file system. It does not modify notes, frontmatter, or any existing Archivist-managed data. It reads; it builds; it exports. That is the full extent of its ambitions.
 
------
+---
+## Contents
+```toc
+```
 
+-----
 ## 2. Conceptual Hierarchy
 
 The graph mirrors the module hierarchy already established in `registry.db`. There is no new hierarchy to learn.
@@ -47,7 +56,6 @@ Machine
 Phase 1 implements module-level graphs only. Phase 2 adds vault and apparatus aggregation using the same tables and a wider query.
 
 -----
-
 ## 3. Storage
 
 Graph data lives in `registry.db` alongside the module registry that already exists. No new database files are created.
@@ -64,7 +72,6 @@ Graph data lives in `registry.db` alongside the module registry that already exi
 Graph nodes and edges are structural metadata about files within modules — they describe the shape of the note graph, not the content of works or changelogs. `registry.db` already has the `modules` table that provides the foreign key anchor for `module_id`. Apparatus databases stay focused on works catalog and changelog records. Concerns remain separated.
 
 -----
-
 ## 4. Schema
 
 Two tables are added to `registry.db`. Both are keyed to `module_id`, which references `modules.id` in the existing registry schema.
@@ -101,7 +108,6 @@ CREATE TABLE IF NOT EXISTS graph_edges (
 - `tags` is stored as a JSON array string. SQLite’s `json_each()` can be used for tag-based filtering in future query commands without a schema change.
 
 -----
-
 ## 5. Wikilink Resolution
 
 Obsidian wikilinks use the format `[[target]]` or `[[target|display text]]`. Archivist resolves these by filename, which is standard Obsidian behavior with no settings manipulation.
@@ -131,7 +137,6 @@ For each raw wikilink text extracted from a file:
 Phase 1 does not resolve cross-module links. A wikilink pointing to a file in a different module is treated as an unresolved link for that module’s graph. Cross-module edge resolution is a Phase 2 concern.
 
 -----
-
 ## 6. Commands
 
 ```
@@ -191,7 +196,6 @@ Re-running `archivist graph build` on a module is safe and idempotent. Existing 
 If `--output` is not specified, the HTML file is written to `ARCHIVE/graph/[module-name]-graph.html` within the module root. The `ARCHIVE/graph/` directory is created if it does not exist. This path is excluded from the graph walk automatically.
 
 -----
-
 ### `archivist graph export`
 
 Re-renders the Cosmoscope HTML from the current state of `registry.db` without re-parsing the file system. Use this when you have corrected DB entries directly and want a fresh export without a full rebuild.
@@ -204,7 +208,6 @@ archivist graph export --output ~/Desktop/my-module-graph.html
 Exits with an error if no graph data exists for the current module. Run `archivist graph build` first.
 
 -----
-
 ### `archivist graph status`
 
 Reads the current graph data for the module from `registry.db` and prints a summary. Does not modify anything.
@@ -235,7 +238,6 @@ Run `archivist graph build` to rebuild from disk.
 The Archivist voice applies here. She finds your orphaned notes deeply unsurprising.
 
 -----
-
 ### `archivist graph clear`
 
 Deletes all graph data for the current module from `registry.db`. Does not delete the exported HTML file.
@@ -248,7 +250,6 @@ archivist graph clear --dry-run
 Prompts for confirmation before deleting. `--dry-run` prints what would be deleted without touching the database. This is a destructive operation — the next `archivist graph build` will reconstruct from disk, but any manual DB corrections will be lost.
 
 -----
-
 ## 7. HTML Export — The Cosmoscope
 
 The Cosmoscope is a single self-contained `.html` file. It has no external dependencies — no CDN calls, no local server, no companion files. It opens in any browser. It works offline. It works on mobile Safari.
@@ -327,7 +328,6 @@ The exported HTML includes a metadata comment block at the top for identificatio
 ```
 
 -----
-
 ## 8. Integration with Existing Archivist Systems
 
 ### 8.1 `.archivist/ignores`
@@ -347,7 +347,6 @@ The graph walk respects `ignores` in `.archivist/config.yaml` using the same pat
 All graph subcommands honour `--dry-run`. No files are written and no database rows are modified. Output describes what would happen.
 
 -----
-
 ## 9. Phase 2 — Apparatus-Wide Graphs
 
 Phase 2 is not specced in detail here. The following notes record design decisions made during Phase 1 that Phase 2 depends on.
@@ -363,7 +362,6 @@ Phase 2 is not specced in detail here. The following notes record design decisio
 **File opening.** Phase 2 will investigate a lightweight local HTTP server approach (`archivist graph serve`) that enables file-open requests from the browser by routing them through `subprocess.run(["open", filepath])` on the server side. This is a desktop-only feature and does not affect the mobile HTML export.
 
 -----
-
 ## 10. Open Questions and Deferred Decisions
 
 **Incremental builds.** Phase 1 always does a full rebuild of the module graph. An incremental mode — parsing only files modified since the last build, using `modified` timestamps or git diff — is a natural optimisation for large modules but is deferred until the full rebuild proves too slow in practice.
@@ -379,5 +377,4 @@ Phase 2 is not specced in detail here. The following notes record design decisio
 **Plugin system extension.** The `.archivist/changelog.py` plugin convention could extend to `graph.py` — a per-project plugin that customizes node coloring, filtering defaults, or sidebar content. Deferred until the base implementation is stable.
 
 -----
-
 *This document is a living spec. It will be revised as implementation surfaces decisions that were not anticipated here. That is not a failure of the spec — it is the spec doing its job.*

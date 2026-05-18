@@ -1,10 +1,15 @@
-# DeleGit — Specification
-
-> Version 0.1 — Draft
-> Status: In Progress
-
 ---
-
+class: spec
+category:
+  - infrastructure
+affiliations:
+created:
+modified: 2026-05-18
+version: "1.0"
+status: in-progress
+related:
+tags:
+---
 ## delegate
 
 /dĕl′ĭ-gāt″, -gĭt/

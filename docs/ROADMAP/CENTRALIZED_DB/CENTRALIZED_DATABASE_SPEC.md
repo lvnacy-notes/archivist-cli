@@ -1,4 +1,16 @@
-# Archivist — Centralized Database Specification
+---
+class: spec
+category:
+  - feature
+  - database
+  - infrastructure
+affiliations:
+modified: 2026-05-18
+version: 0.2
+related:
+tags:
+---
+
 
 **Status:** Draft  
 **Version:** 0.2.0  
