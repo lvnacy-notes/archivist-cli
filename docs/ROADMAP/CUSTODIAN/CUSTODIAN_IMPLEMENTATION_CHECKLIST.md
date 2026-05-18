@@ -41,19 +41,19 @@ Check boxes as work completes. Notes column is for anything that bites you mid-i
 
 ### Command Module print() Audit
 
-| # | File | Task | Status | Notes |
-|---|------|------|--------|-------|
-| 2.1 | `commands/changelog/changelog_base.py` | Replace raw `print()` calls with output functions | ⬜ | Dry-run content preview (`print(changelog_content)`) stays as `print()` — it is output, not a log event |
-| 2.2 | `commands/changelog/library.py` | Replace raw `print()` calls with output functions | ⬜ | All in `print_summary()` |
-| 2.3 | `cli.py` | Replace three routing `print()` calls with output functions | ⬜ | Module-type routing and plugin detection lines |
+| #   | File                                   | Task                                                        | Status | Notes                                                                                                   |
+| --- | -------------------------------------- | ----------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------- |
+| 2.1 | `commands/changelog/changelog_base.py` | Replace raw `print()` calls with output functions           | ✅ Done | Dry-run content preview (`print(changelog_content)`) stays as `print()` — it is output, not a log event |
+| 2.2 | `commands/changelog/library.py`        | Replace raw `print()` calls with output functions           | ✅ Done | All in `print_summary()`                                                                                |
+| 2.3 | `cli.py`                               | Replace three routing `print()` calls with output functions | ✅ Done | Module-type routing and plugin detection lines                                                          |
 
 ### Verbosity Demotions
 
-| # | File | Task | Status | Notes |
-|---|------|------|--------|-------|
-| 2.4 | `commands/frontmatter/apply_template.py` | Demote per-file `progress()` calls to `log.debug()` | ⬜ | `[dry-run]` line at L255 is the primary candidate |
-| 2.5 | `commands/changelog/changelog_base.py` | Demote structural `progress()` calls that are debug-level chatter | ⬜ | Repo root and output dir lines are candidates |
-| 2.6 | Remaining command modules | Audit for `progress()` calls that belong at debug level | ⬜ | Do piecemeal as modules are touched for other reasons |
+| #   | File                                     | Task                                                              | Status | Notes                                                                           |
+| --- | ---------------------------------------- | ----------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------- |
+| 2.4 | `commands/frontmatter/apply_template.py` | Demote per-file `progress()` calls to `log.debug()`               | ⬜      | `[dry-run]` line at L255 is the primary candidate                               |
+| 2.5 | `commands/changelog/changelog_base.py`   | Demote structural `progress()` calls that are debug-level chatter | ⬜      | Repo root and output dir lines are candidates                                   |
+| 2.6 | Remaining command modules                | Audit for `progress()` calls that belong at debug level           | ⬜      | Do piecemeal as modules are touched for other reasons; remaining: `manifest.py` |
 
 ---
 

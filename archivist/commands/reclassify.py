@@ -20,10 +20,8 @@ import sys
 from pathlib import Path
 
 from archivist.utils import (
-    NoteFilter,
     build_note_filter,
     error,
-    find_markdown_files,
     get_file_frontmatter,
     get_repo_root,
     matches_class_filter,
@@ -48,13 +46,17 @@ def _find_frontmatter_end(lines: list[str]) -> int | None:
     """
     if not lines or lines[0].rstrip() != "---":
         return None
-    for i, line in enumerate(lines[1:], start=1):
+    for i, line in enumerate(lines[1:], start = 1):
         if line.rstrip() == "---":
             return i
     return None
 
 
-def _rewrite_class(content: str, old_val: str, new_val: str) -> str | None:
+def _rewrite_class(
+    content: str,
+    old_val: str,
+    new_val: str
+) -> str | None:
     """
     Replace `class: <old_val>` with `class: <new_val>` within the frontmatter
     block only. Matching is case-insensitive; the new value is written verbatim.
@@ -90,7 +92,11 @@ def run(args: argparse.Namespace) -> None:
     # Build a NoteFilter from args so reclassify goes through the same
     # file resolution path as the frontmatter commands — including ignores.
     nf = build_note_filter(args)
-    validate_note_filter(nf, require_at_least_one=False, command_name="reclassify")
+    validate_note_filter(
+        nf,
+        require_at_least_one = False,
+        command_name = "reclassify"
+    )
 
     all_files = resolve_file_targets(nf, git_root)
 
@@ -104,7 +110,7 @@ def run(args: argparse.Namespace) -> None:
             matched.append(filepath)
 
     if not matched:
-        progress(f"  No files found with class: {old_val}")
+        progress(f"  No files found with class: { old_val }")
         return
 
     # --- Dry run ---
@@ -112,15 +118,15 @@ def run(args: argparse.Namespace) -> None:
         print_dry_run_header()
         print()
         progress(
-            f"  Would reclassify {len(matched)} file(s): "
-            f"class: {old_val}  →  class: {new_val}\n"
+            f"  Would reclassify { len(matched) } file(s): "
+            f"class: { old_val }  →  class: { new_val }\n"
         )
         for f in matched:
             try:
                 rel = f.relative_to(git_root)
             except ValueError:
                 rel = f
-            progress(f"  · {rel}")
+            progress(f"  · { rel }")
         return
 
     # --- Live run ---

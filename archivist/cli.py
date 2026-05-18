@@ -40,6 +40,7 @@ from archivist.formatter import (
     fmt_examples,
     fmt_warning,
 )
+from archivist.utils import error, progress
 
 BANNER = r"""
   ┌─────────────────────────────────────────────────────────────────────┐
@@ -878,7 +879,7 @@ def main():
         }
         
         if args.fm_command not in fm_commands:
-            print(f"Error: Unknown frontmatter subcommand '{args.fm_command}'")
+            error(f"Unknown frontmatter subcommand '{ args.fm_command }'")
             return
         
         module_path = fm_commands[args.fm_command]
@@ -905,7 +906,7 @@ def main():
             module_type = get_module_type(git_root)
             if module_type and module_type in MODULE_CHANGELOG_COMMAND:
                 cl_command = MODULE_CHANGELOG_COMMAND[module_type]
-                print(f"  → .archivist: module-type '{module_type}' → archivist changelog {cl_command}")
+                progress(f"  → .archivist: module-type '{ module_type }' → archivist changelog {cl_command}")
             else:
                 cl_command = "general"
         else:
@@ -925,7 +926,7 @@ def main():
         if getattr(args, "cl_command", None) is None:
             plugin_path = find_changelog_plugin(git_root)
             if plugin_path:
-                print(f"  → changelog plugin found: {plugin_path.relative_to(git_root)}")
+                progress(f"  → changelog plugin found: { plugin_path.relative_to(git_root) }")
                 plugin = load_changelog_plugin(plugin_path)
                 plugin.run(args)
                 return

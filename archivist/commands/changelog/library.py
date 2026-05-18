@@ -93,6 +93,7 @@ from archivist.utils import (
     get_today,
     is_cross_dir_move,
     matches_class_filter,
+    progress,
     read_archivist_config,
     rename_display_path,
     rename_suspicion,
@@ -980,35 +981,35 @@ def print_summary(ctx: ChangelogContext) -> None:
     defs = lib_stats["definitions"]
     by_status = works["by_status"]
 
-    print(f"  Project       : {get_project_name(ctx.git_root)}")
-    print(
+    progress(f"  Project       : {get_project_name(ctx.git_root)}")
+    progress(
         f"  Works         : {len(works['added'])} added, "
         f"{len(works['updated'])} updated, {len(works['removed'])} removed"
     )
-    print(
+    progress(
         f"  Status counts : "
         + ", ".join(f"{s}={by_status[s]}" for s in WORK_STAGES)
     )
-    print(
+    progress(
         f"  Authors       : {len(authors['added'])} added, "
         f"{len(authors['updated'])} updated, {len(authors['removed'])} removed"
     )
-    print(
+    progress(
         f"  Publications  : {len(pubs['added'])} added, "
         f"{len(pubs['updated'])} updated, {len(pubs['removed'])} removed"
     )
-    print(
+    progress(
         f"  Definitions   : {len(defs['added'])} added, "
         f"{len(defs['updated'])} updated, {len(defs['removed'])} removed"
     )
-    print(
+    progress(
         f"  Files total   : {len(ctx.changes['A'])} added, "
         f"{len(ctx.modified)} modified, {len(ctx.true_deleted)} archived"
     )
     if ctx.args.commit_sha:
-        print(f"  SHA           : {ctx.args.commit_sha}")
+        progress(f"  SHA           : {ctx.args.commit_sha}")
     else:
-        print("  SHA           : (staged — backfilled by post-commit hook)")
+        progress("  SHA           : (staged — backfilled by post-commit hook)")
 
 
 # ---------------------------------------------------------------------------

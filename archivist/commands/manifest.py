@@ -31,6 +31,7 @@ from archivist.utils import (
     render_field,
     safe_read_markdown,
     safe_write_markdown,
+    success,
     warning,
 )
 
@@ -336,19 +337,16 @@ def run(args: argparse.Namespace) -> None:
             return
 
         status = _register_sha(git_root, args.register, "[manual registration]")
-        messages = {
-            "inserted":
-                f"✓ Registered '{args.register}' — {_get_commit_message(args.register)}",
-            "already_registered":
-                f"  '{args.register}' already in DB (not yet included in a changelog)",
-            "already_included":
-                f"  '{args.register}' already claimed by a changelog — skipping",
-            "invalid_sha":
-                f"✗ '{args.register}' is not a valid commit SHA in this repo",
-            "no_sha":
-                "  No SHA provided",
-        }
-        progress(messages.get(status, status))
+        if status == "inserted":
+            success(f"Registered '{args.register}' — {_get_commit_message(args.register)}")
+        elif status == "already_registered":
+            progress(f"'{args.register}' already in DB (not yet included in a changelog)")
+        elif status == "already_included":
+            progress(f"'{args.register}' already claimed by a changelog — skipping")
+        elif status == "invalid_sha":
+            error(f"'{args.register}' is not a valid commit SHA in this repo")
+        else:
+            progress("No SHA provided")
         return
 
     # --- Manifest generation mode ---
@@ -423,31 +421,31 @@ def run(args: argparse.Namespace) -> None:
         print_dry_run_header()
         print()
         print(manifest_content)
-        print(f"\n=== Would write to: {output_path} ===")
-        print(f"  Resolved edition : {edition_path}")
-        print(f"  Resolved git root: {git_root}")
+        progress(f"\n=== Would write to: {output_path} ===")
+        progress(f"  Resolved edition : {edition_path}")
+        progress(f"  Resolved git root: {git_root}")
     else:
         if not safe_write_markdown(output_path, manifest_content):
             sys.exit(1)
         verb = "updated" if existing else "written"
-        print(f"✓ Manifest {verb} to: {output_path}")
+        success(f"Manifest {verb} to: {output_path}")
 
-    print(f"  Edition  : {_edition_wikilink(edition_name)}")
-    print(f"  Scoped   : {edition_path}")
-    print(
+    progress(f"  Edition  : {_edition_wikilink(edition_name)}")
+    progress(f"  Scoped   : {edition_path}")
+    progress(
         f"  Articles : {num_columns} (class: column) + {num_editions} (class: edition)"
         f" = {num_columns + num_editions} published"
     )
-    print(
+    progress(
         f"  Assets   : {num_assets} assets "
         f"({len(all_edition_files)} total files in edition dir)"
     )
-    print(f"  Changes  : {num_added} added, {num_modified} modified, {num_archived} archived")
+    progress(f"  Changes  : {num_added} added, {num_modified} modified, {num_archived} archived")
     if args.volume:
-        print(f"  Volume   : {args.volume}")
+        progress(f"  Volume   : {args.volume}")
     if publish_date:
-        print(f"  Pub date : {publish_date}")
+        progress(f"  Pub date : {publish_date}")
     if args.commit_sha:
-        print(f"  SHA      : {args.commit_sha}")
+        progress(f"  SHA      : {args.commit_sha}")
     else:
-        print("  SHA      : (staged changes — run after your commit to lock it in)")
+        progress("  SHA      : (staged changes — run after your commit to lock it in)")

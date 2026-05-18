@@ -34,10 +34,12 @@ import sys
 from pathlib import Path
 
 from archivist.utils import (
+    error,
     get_repo_root,
     progress,
     read_archivist_config,
     success,
+    warning,
     write_archivist_config,
 )
 
@@ -68,8 +70,8 @@ def _copy_sample_changelog(git_root: Path, dry_run: bool) -> None:
         ref = importlib.resources.files("archivist.data").joinpath("sample-changelog.py")
         content = ref.read_text(encoding="utf-8")
     except Exception as e:
-        progress(
-            f"  ⚠️  Couldn't read bundled sample-changelog.py: {e}\n"
+        warning(
+            f"  Couldn't read bundled sample-changelog.py: {e}\n"
             "     Migration will complete without it. Grab it from the Archivist\n"
             "     repo if you need the plugin reference."
         )
@@ -99,8 +101,8 @@ def _sync_hooks_local(git_root: Path, dry_run: bool) -> None:
     try:
         install_hooks_local(git_root, dry_run=dry_run)
     except Exception as e:
-        progress(
-            f"  ⚠️  Hook sync failed — migration succeeded but hooks are stale.\n"
+        warning(
+            f"Hook sync failed — migration succeeded but hooks are stale.\n"
             f"     Run `archivist hooks sync` to fix it.\n"
             f"     ({e})"
         )
@@ -113,7 +115,7 @@ def run(args: argparse.Namespace) -> None:
     legacy_path = _get_legacy_path(git_root)
     config_yaml_path = _get_config_yaml_path(git_root)
 
-    print(f"\n  📁 Repo root: {git_root}")
+    progress(f"\n  📁 Repo root: {git_root}")
 
     # --- Guard: already migrated ---
     if config_yaml_path.exists():
@@ -125,10 +127,9 @@ def run(args: argparse.Namespace) -> None:
 
     # --- Guard: nothing to migrate from ---
     if not legacy_path.exists() or legacy_path.is_dir():
-        print(
-            "❌  No flat .archivist file found. Nothing to migrate.\n"
-            "   If you're starting fresh, run `archivist init` instead.",
-            file=sys.stderr,
+        error(
+            "   No flat .archivist file found. Nothing to migrate.\n"
+            "   If you're starting fresh, run `archivist init` instead."
         )
         sys.exit(1)
 
@@ -136,27 +137,26 @@ def run(args: argparse.Namespace) -> None:
     config = read_archivist_config(git_root)
     if config is None:
         # Should be unreachable given the guard above, but be explicit.
-        print(
-            "❌  Found .archivist but couldn't read it. "
-            "Check the file for YAML errors before retrying.",
-            file=sys.stderr,
+        error(
+            "Found .archivist but couldn't read it. "
+            "Check the file for YAML errors before retrying."
         )
         sys.exit(1)
 
     module_type = config.get("module-type") if config else None
 
     # --- Preview ---
-    print(f"\n  Migration plan:")
-    print(f"    Read   : .archivist  (flat file)")
-    print(f"    Create : .archivist/ (directory)")
-    print(f"    Write  : .archivist/config.yaml")
+    progress(f"\n  Migration plan:")
+    progress(f"    Read   : .archivist  (flat file)")
+    progress(f"    Create : .archivist/ (directory)")
+    progress(f"    Write  : .archivist/config.yaml")
     if module_type == "library":
-        print(f"    Write  : .archivist/sample-changelog.py  (if not present)")
-    print(f"    Delete : .archivist  (flat file)")
-    print(f"    Stage  : .archivist/ + .archivist deletion")
-    print(f"\n  Config content (unchanged):")
+        progress(f"    Write  : .archivist/sample-changelog.py  (if not present)")
+    progress(f"    Delete : .archivist  (flat file)")
+    progress(f"    Stage  : .archivist/ + .archivist deletion")
+    progress(f"\n  Config content (unchanged):")
     for k, v in config.items():
-        print(f"    {k}: {v}")
+        progress(f"    {k}: {v}")
 
     if dry_run:
         progress("\n  [dry-run] No files written, deleted, or staged.")
@@ -209,8 +209,8 @@ def run(args: argparse.Namespace) -> None:
         )
         success("  Staged: .archivist/ (new) + .archivist deletion")
     except subprocess.CalledProcessError as e:
-        progress(
-            "  ⚠️  Auto-staging failed — stage manually before committing:\n"
+        warning(
+            "Auto-staging failed — stage manually before committing:\n"
             "     git add .archivist/\n"
             f"     ({e})"
         )
@@ -220,7 +220,7 @@ def run(args: argparse.Namespace) -> None:
     #    moment migration completes. Syncing now fixes that immediately.
     #    Global templates are the user's call; `archivist hooks install` handles
     #    that separately.
-    print(
+    progress(
         "\n  The existing git hooks check for a flat .archivist file and will"
         "\n  silently skip all archivist work on migrated repos until updated."
     )
@@ -234,7 +234,7 @@ def run(args: argparse.Namespace) -> None:
         )
 
     # --- Done ---
-    print(
+    success(
         "\n  Migration complete. Commit when ready:\n"
         "\n"
         "      git commit -m 'chore: migrate .archivist to directory form'\n"

@@ -24,6 +24,7 @@ from archivist.utils import (
     get_project_name,
     get_submodule_status,
     get_today,
+    progress,
     render_field,
     resolve_changelog_title,
 )
@@ -195,16 +196,16 @@ def _build_body(ctx: ChangelogContext) -> str:
 
 def _print_summary(ctx: ChangelogContext) -> None:
     updated_subs: list[str] = cast(list[str], ctx.data["updated_subs"])
-    print(f"  Project    : {get_project_name(ctx.git_root)}")
-    print(
+    progress(f"  Project    : {get_project_name(ctx.git_root)}")
+    progress(
         f"  Changes    : {len(ctx.changes['A'])} added, "
         f"{len(ctx.modified)} modified, {len(ctx.true_deleted)} archived"
     )
-    print(f"  Submodules : {len(updated_subs)} updated in this commit")
+    progress(f"  Submodules : {len(updated_subs)} updated in this commit")
     if ctx.args.commit_sha:
-        print(f"  SHA        : {ctx.args.commit_sha}")
+        progress(f"  SHA        : {ctx.args.commit_sha}")
     else:
-        print("  SHA        : (staged — backfilled by post-commit hook)")
+        progress("  SHA        : (staged — backfilled by post-commit hook)")
 
 
 # ---------------------------------------------------------------------------
