@@ -57,7 +57,7 @@ def progress(msg: str) -> None:
     """
     Log a progress/informational message at INFO level.
     In --verbose mode, callers that want truly noisy per-file output should
-    call log.debug() directly instead of going through this function — that
+    call ledger.debug() directly instead of going through this function — that
     keeps the default tier clean without --quiet having to nuke everything.
     """
     ledger.info(msg)

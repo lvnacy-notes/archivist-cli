@@ -27,6 +27,7 @@ The template is the authority. The template is the law. You built it.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -57,6 +58,8 @@ from archivist.utils import (
     validate_note_filter,
     warning,
 )
+
+ledger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +255,7 @@ def _process_note(
     summary = ", ".join(parts)
 
     if dry_run:
-        progress(f"  [dry-run] {summary}: {note_path}")
+        ledger.debug("  [dry-run] %s: %s", summary, note_path)
         return True
 
     # Step 7: render

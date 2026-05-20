@@ -55,9 +55,9 @@ Check boxes as work completes. Notes column is for anything that bites you mid-i
 
 | #   | File                                     | Task                                                              | Status | Notes                                                                           |
 | --- | ---------------------------------------- | ----------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------- |
-| 2.4 | `commands/frontmatter/apply_template.py` | Demote per-file `progress()` calls to `log.debug()`               | ⬜      | `[dry-run]` line at L255 is the primary candidate                               |
-| 2.5 | `commands/changelog/changelog_base.py`   | Demote structural `progress()` calls that are debug-level chatter | ⬜      | Repo root and output dir lines are candidates                                   |
-| 2.6 | Remaining command modules                | Audit for `progress()` calls that belong at debug level           | ⬜      | Do piecemeal as modules are touched for other reasons; remaining: `manifest.py` |
+| 2.4 | `commands/frontmatter/apply_template.py` | Demote per-file `progress()` calls to `log.debug()`               | ✅ Done | `[dry-run]` line in `_process_note` demoted; structural run() lines (root, template, filters, scanning, done) stay at INFO                               |
+| 2.5 | `commands/changelog/changelog_base.py`   | Demote structural `progress()` calls that are debug-level chatter | ✅ Done | Repo root and output dir lines demoted; existing/new changelog lines, dry-run target, and summary lines stay at INFO                                    |
+| 2.6 | Remaining command modules                | Audit for `progress()` calls that belong at debug level           | ✅ Done | Do piecemeal as modules are touched for other reasons; remaining: `manifest.py` |
 
 ---
 

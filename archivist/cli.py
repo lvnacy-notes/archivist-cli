@@ -863,6 +863,7 @@ def main():
     import argcomplete
     argcomplete.autocomplete(parser)
     args: argparse.Namespace = parser.parse_args()
+    _configure_logging(args)
 
     if args.command == "init":
         from archivist.commands.init import run
