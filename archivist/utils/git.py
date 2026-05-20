@@ -17,7 +17,7 @@ from archivist.utils.output import (
     warning
 )
 
-logger = logging.getLogger(__name__)
+ledger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Shared type
@@ -71,7 +71,7 @@ def ensure_staged(git_root: Path) -> None:
         progress(f"  ✔  Staging check passed — {len(staged_files)} file(s) staged")
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"Git error while checking staged files: {e}")
+        ledger.error(f"Git error while checking staged files: {e}")
         sys.exit(1)
 
 
@@ -113,7 +113,7 @@ def ensure_staged_under(path: Path, git_root: Path) -> None:
         progress(f"  ✔  Staging check passed — {len(in_scope)} file(s) staged under '{scope_prefix}'")
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"Git error while checking staged files: {e}")
+        ledger.error(f"Git error while checking staged files: {e}")
         sys.exit(1)
 
 
@@ -167,7 +167,7 @@ def get_git_changes(
         try:
             scope_path = path.relative_to(git_root)
         except ValueError:
-            logger.error(
+            ledger.error(
                 f"Error: Path '{path}' is not inside the git repo at '{git_root}'."
             )
             sys.exit(1)
@@ -198,7 +198,7 @@ def get_git_changes(
             errors="replace"
         )
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error running git command: {e}")
+        ledger.error(f"Error running git command: {e}")
         sys.exit(1)
 
     modified: list[str] = []
@@ -221,7 +221,7 @@ def get_git_changes(
             case "D":
                 deleted.append(parts[-1].strip())
             case _:
-                logger.warning(f"Unrecognized git status code in line: {line}")
+                ledger.warning(f"Unrecognized git status code in line: {line}")
 
     return GitChanges(
         M = modified,
@@ -247,7 +247,7 @@ def get_repo_root() -> Path:
         )
         return Path(result.stdout.strip())
     except subprocess.CalledProcessError:
-        logger.error("Not inside a git repo. Are you in the right directory?")
+        ledger.error("Not inside a git repo. Are you in the right directory?")
         sys.exit(1)
 
 

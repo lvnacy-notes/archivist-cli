@@ -1,5 +1,5 @@
 # archivist project configuration
 apparatus: False
 module-type: general
-changelog-output-dir: docs/ARCHIVE
+changelog-output-dir: docs/ARCHIVE/CHANGELOG
 templater: False

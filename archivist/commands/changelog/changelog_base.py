@@ -37,6 +37,7 @@ The `post_changes` hook returns None — side-effects only, into `ctx.data`.
 from __future__ import annotations
 
 import argparse
+import logging
 import subprocess
 import sys
 from collections.abc import Callable
@@ -75,6 +76,8 @@ from archivist.utils import (
     warning,
     write_changelog,
 )
+
+ledger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -188,10 +191,10 @@ def run_changelog(
     """
     # Step 1: Resolve paths
     git_root = get_repo_root()
-    progress(f"  📁 Repo root : {git_root}")
+    ledger.debug("  📁 Repo root : %s", git_root)
 
     output_dir = find_changelog_output_dir(git_root, module_type)
-    progress(f"  📁 Output dir: {output_dir}")
+    ledger.debug("  📁 Output dir: %s", output_dir)
 
     extra_paths = get_extra_paths(git_root) if get_extra_paths else None
 
