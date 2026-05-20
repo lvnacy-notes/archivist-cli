@@ -234,10 +234,6 @@ The following centralized DB behaviors must be in place before git integration i
 - `archivist add` scaffolded (git passthrough not yet active) — §1.5.3
 - `archivist deinit` scaffolded (git passthrough not yet active) — §1.5.4
 
-**Potential gap — hook installation into cloned/added modules:**
-
-`archivist add` (step 7 of the flow in §3.2) installs git hooks into the target module. The centralized DB spec notes hook installation as part of `archivist add` but does not detail what "install hooks" means in the context of a freshly cloned repo versus an existing repo. The hooks module (`archivist hooks install` / `archivist hooks sync`) should be verified to handle both cases cleanly before git integration begins.
-
 **Gap — `git_remote` population and remote selection:**
 
 The centralized DB implementation checklist specifies that `git_remote` is collected via `git remote get-url origin` during `archivist init` (§1.5.5). This is a footgun. Not every user names their remote "origin"; git imposes no such convention, and users who manage multiple remotes per repo — e.g. named by platform — will have no "origin" to get.
@@ -263,5 +259,3 @@ SQLite files are binary. Git tracks them but cannot diff or merge them meaningfu
 The shape of the first-run initialization flow — specifically, when and how the user configures the registry remote — is a dependency for this feature and must be resolved in the prerequisite checklist before implementation begins.
 
 **Superproject detection in `deinit`:** Step 3 of the deinit flow removes `module_bays` rows scoped to the current superproject's vault module. Detecting the superproject reliably requires `git rev-parse --show-superproject-working-tree`. This is already used in the centralized DB spec (§1.5.5); confirm it behaves correctly when called from the superproject working directory rather than from within the submodule.
-
-**Archivist Manifest**: `archivist manifest` should run `git add` under the hood when passed a path. This should be workshopped further.
