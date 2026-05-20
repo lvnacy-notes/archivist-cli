@@ -119,6 +119,7 @@ CREATE TABLE modules (
     git_remote      TEXT,                 -- remote URL; used for cross-module sync
     library_tag     TEXT,                 -- library modules only
     created_at      TEXT NOT NULL,
+    last_synced_at  TEXT,                 -- ISO datetime; updated by pre-commit hook on each registry upsert
     decimated_at    TEXT                  -- NULL = active; ISO date = tombstoned
 );
 
