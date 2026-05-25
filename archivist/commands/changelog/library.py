@@ -86,6 +86,7 @@ import yaml
 
 from archivist.commands.changelog.changelog_base import ChangelogContext, run_changelog
 from archivist.utils import (
+    ConfigSchema,
     GitChanges,
     get_file_frontmatter,
     get_file_from_git,
@@ -396,7 +397,7 @@ def _analyse_catalog_changes(changes: GitChanges, git_root: Path) -> LibraryStat
 
 def _get_works_dir(git_root: Path) -> Path:
     """Return the works directory from .archivist config, defaulting to 'works'."""
-    config = read_archivist_config(git_root) or {}
+    config: ConfigSchema | None = read_archivist_config(git_root) or {}
     works_dir = config.get("works-dir", "works")
     if not isinstance(works_dir, str):
         works_dir = "works"

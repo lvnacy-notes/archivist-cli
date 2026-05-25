@@ -33,6 +33,7 @@ from pathlib import Path
 
 from archivist.utils import (
     FRONTMATTER_RE,
+    ConfigSchema,
     NoteFilter,
     TemplaterContext,
     TemplaterMode,
@@ -308,7 +309,7 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     root = get_repo_root()
-    config = read_archivist_config(root)
+    config: ConfigSchema | None = read_archivist_config(root)
     mode = get_templater_mode(config)
 
     if args.dry_run:
