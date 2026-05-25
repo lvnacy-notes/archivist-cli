@@ -7,6 +7,7 @@ import sys
 import uuid as _uuid_module
 from pathlib import Path
 from archivist.utils.config import (
+    ConfigSchema,
     get_module_type,
     read_archivist_config,
 )
@@ -188,7 +189,7 @@ def find_changelog_output_dir(git_root: Path, module_type: str | None = None) ->
     
     Creates the directory if it does not exist.
     """
-    config = read_archivist_config(git_root)
+    config: ConfigSchema | None = read_archivist_config(git_root)
     
     # Check config for custom output dir
     if config and "changelog-output-dir" in config:

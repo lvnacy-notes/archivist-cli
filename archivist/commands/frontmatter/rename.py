@@ -20,6 +20,7 @@ from pathlib import Path
 
 from archivist.utils import (
     FRONTMATTER_RE,
+    ConfigSchema,
     NoteFilter,
     TemplaterMode,
     build_note_filter,
@@ -160,7 +161,7 @@ def run(args: argparse.Namespace) -> None:
     )
 
     root = get_repo_root()
-    config = read_archivist_config(root)
+    config: ConfigSchema | None = read_archivist_config(root)
     mode = get_templater_mode(config)
 
     if args.dry_run:

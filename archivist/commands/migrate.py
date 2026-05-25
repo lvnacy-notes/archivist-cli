@@ -34,6 +34,7 @@ import sys
 from pathlib import Path
 
 from archivist.utils import (
+    ConfigSchema,
     error,
     get_repo_root,
     progress,
@@ -134,7 +135,7 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # --- Read the existing config ---
-    config = read_archivist_config(git_root)
+    config: ConfigSchema | None = read_archivist_config(git_root)
     if config is None:
         # Should be unreachable given the guard above, but be explicit.
         error(

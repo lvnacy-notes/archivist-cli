@@ -13,6 +13,7 @@ from pathlib import Path
 
 from archivist.utils import (
     APPARATUS_MODULE_TYPES,
+    ConfigSchema,
     get_archivist_config_path,
     get_repo_root,
     read_archivist_config,
@@ -133,7 +134,7 @@ def _prompt_templater_mode() -> str:
 
 def run(args: argparse.Namespace) -> None:
     git_root = get_repo_root()
-    existing = read_archivist_config(git_root)
+    existing: ConfigSchema | None = read_archivist_config(git_root)
     dry_run = getattr(args, "dry_run", False)
 
     print(f"\n  📁 Repo root: {git_root}")
@@ -160,7 +161,7 @@ def run(args: argparse.Namespace) -> None:
             "Select module type:",
             APPARATUS_MODULE_TYPES,
         )
-        config: dict[str, str | list[str]] = {
+        config: ConfigSchema = {
             "apparatus":   "true",
             "module-type": module_type,
         }
@@ -171,7 +172,7 @@ def run(args: argparse.Namespace) -> None:
             config["works-dir"] = works_dir
     else:
         module_type = "general"
-        config: dict[str, str | list[str]] = {
+        config: ConfigSchema = {
             "apparatus":   "false",
             "module-type": module_type,
         }

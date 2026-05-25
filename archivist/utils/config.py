@@ -8,10 +8,38 @@ import sys
 import types
 from datetime import datetime
 from pathlib import Path
+from typing import TypedDict
 
 import yaml
 
 from archivist.utils.output import error
+
+
+# ---------------------------------------------------------------------------
+# Config schema
+# ---------------------------------------------------------------------------
+
+# Functional form required — hyphenated keys (module-type, git-remote, etc.)
+# are not valid Python identifiers and cannot be expressed in the class-based
+# TypedDict syntax. total=False: all fields NotRequired, reflecting that config
+# is written incrementally and may be partial at any stage of setup.
+#
+# Fields marked "always present after init" are guaranteed by the write path,
+# not enforced here — the type system can't distinguish a freshly cloned repo
+# from a fully initialised one, and it shouldn't try.
+ConfigSchema = TypedDict('ConfigSchema', {
+    'uuid':                 str,        # always present after init; first field written
+    'module-type':          str,        # always present; one of APPARATUS_MODULE_TYPES
+    'apparatus':            str,        # apparatus name e.g. "writing"; absent for standalone
+    'vaults':               list[str],  # vault module names containing this module
+    'git-remote':           str,        # remote URL; absent if not configured
+    'git-remote-name':      str,        # human-readable remote label e.g. "origin"
+    'library-tag':          str,        # library modules only
+    'works-dir':            str,        # library modules only; default: "works"
+    'changelog-output-dir': str,        # optional custom output dir
+    'templater':            str,        # "resolve" | "preserve" | "false"
+    'ignores':              list[str],  # gitignore patterns
+}, total=False)
 
 
 # Known Apparatus module types
@@ -95,7 +123,7 @@ def build_ignore_spec(git_root: Path) -> pathspec.PathSpec:
     problem, not this function's. Don't pass absolute paths and then file
     a bug when nothing matches.
     """
-    config = read_archivist_config(git_root)
+    config: ConfigSchema | None = read_archivist_config(git_root)
     patterns: list[str] = []
 
     if config:
@@ -118,7 +146,7 @@ def get_module_type(git_root: Path) -> str | None:
     """
     Return the module-type from .archivist config, or None if not configured.
     """
-    config = read_archivist_config(git_root)
+    config: ConfigSchema | None = read_archivist_config(git_root)
     if config is None:
         return None
     value = config.get("module-type")
@@ -138,7 +166,7 @@ def get_today(format: str = CHANGELOG_DATE_FORMAT) -> str:
 # Read / write
 # ---------------------------------------------------------------------------
 
-def read_archivist_config(git_root: Path) -> dict[str, str | list[str]] | None:
+def read_archivist_config(git_root: Path) -> ConfigSchema | None:
     """
     Read and parse the .archivist config — directory form or legacy flat file.
 
@@ -152,14 +180,14 @@ def read_archivist_config(git_root: Path) -> dict[str, str | list[str]] | None:
     if path.is_dir():
         return None
     try:
-        data: dict[str, str | list[str]] | None = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data: ConfigSchema | None = yaml.safe_load(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except yaml.YAMLError as e:
         error(f"Could not parse .archivist config: {e}")
         return {}
 
 
-def write_archivist_config(git_root: Path, config: dict) -> None:
+def write_archivist_config(git_root: Path, config: ConfigSchema) -> None:
     """
     Write the .archivist config to `.archivist/config.yaml`.
 
