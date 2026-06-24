@@ -390,6 +390,27 @@ class TestWriteReadRoundTrip:
         assert result["module-type"] == "publication"
         assert result["changelog-output-dir"] == "ARCHIVE/CHANGELOG"
 
+    def test_apparati_list_survives_round_trip(self, tmp_path):
+        """
+        The multi-apparatus list form must survive write → read intact.
+        A list goes in; a list comes out. Not a string, not a dict, not
+        whatever the fuck PyYAML feels like returning that day.
+        """
+        write_archivist_config(tmp_path, {  # type: ignore[arg-type]
+            "module-type": "library",
+            "apparati": ["writing", "cyber"],
+        })
+        result = read_archivist_config(tmp_path)
+        assert result is not None
+        apparati = result.get("apparati")
+        assert isinstance(apparati, list), (
+            f"apparati came back as {type(apparati).__name__!r} after round-trip. "
+            "write_archivist_config must serialize it as a YAML block sequence."
+        )
+        assert apparati == ["writing", "cyber"], (
+            f"apparati list mangled to {apparati!r}. Expected [\"writing\", \"cyber\"]."
+        )
+
 
 # ===========================================================================
 # write_archivist_config — ignores serialization
@@ -448,6 +469,82 @@ class TestWriteArchivistConfigIgnores:
             f"Ignore patterns didn't survive the round-trip. "
             f"Written: {patterns!r}, got back: {result.get('ignores')!r}."
         )
+
+
+# ===========================================================================
+# write_archivist_config — apparati serialization
+# ===========================================================================
+
+class TestWriteArchivistConfigApparati:
+    """
+    apparati is a list-valued key — same general treatment as ignores,
+    but slugs don't need quoting. Glob patterns need quotes because they
+    contain characters YAML chokes on (* ? [] !). Apparatus names are
+    clean alphanumeric slugs. Quoting them is unnecessary noise.
+
+    If write_archivist_config serializes apparati incorrectly, every
+    subsequent read will return garbage and the whole multi-apparatus
+    model is broken from the first write.
+    """
+
+    def test_single_apparatus_serialized_as_block_sequence(self, tmp_path):
+        write_archivist_config(tmp_path, {"apparati": ["writing"]})  # type: ignore[arg-type]
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
+        assert "apparati:" in content, "apparati key is missing from written config"
+        assert "  - writing" in content, (
+            f"Expected '  - writing' in config, got:\n{content}\n"
+            "Block sequence format required — not an inline list."
+        )
+
+    def test_multiple_apparati_all_serialized(self, tmp_path):
+        write_archivist_config(tmp_path, {"apparati": ["writing", "cyber", "research"]})  # type: ignore[arg-type]
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
+        for name in ("writing", "cyber", "research"):
+            assert f"  - {name}" in content, (
+                f"Apparatus '{name}' is missing from the written config. "
+                "All members of the list must be serialized."
+            )
+
+    def test_apparati_slugs_are_not_quoted(self, tmp_path):
+        """
+        Apparatus names are slugs — lowercase alphanumerics and hyphens.
+        They don't need quoting. Quoting them is pointless and ugly.
+        Ignores get quoted because globs have YAML-hostile chars. Slugs don't.
+        """
+        write_archivist_config(tmp_path, {"apparati": ["my-apparatus"]})  # type: ignore[arg-type]
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
+        assert '  - "my-apparatus"' not in content, (
+            "Apparatus slug is unnecessarily quoted. "
+            "Slugs are safe YAML scalars — no quotes needed."
+        )
+        assert "  - my-apparatus" in content
+
+    def test_empty_apparati_writes_empty_block_sequence(self, tmp_path):
+        """
+        An empty list must be written as `  []` — not a bare `apparati:`
+        which YAML parses as null, not an empty list. These are not the same thing.
+        """
+        write_archivist_config(tmp_path, {"apparati": []})  # type: ignore[arg-type]
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
+        assert "apparati:" in content
+        assert "  []" in content, (
+            f"Empty apparati list wasn't written as '  []'. Got:\n{content}\n"
+            "A bare 'apparati:' key parses as null in YAML — that's wrong."
+        )
+
+    def test_apparati_distinct_from_ignores_quoting(self, tmp_path):
+        """
+        Write both keys. Verify ignores entries are quoted and apparati entries
+        are not — both in the same file, no cross-contamination of formatting.
+        """
+        write_archivist_config(tmp_path, {  # type: ignore[arg-type]
+            "apparati": ["writing"],
+            "ignores": ["*.tmp"],
+        })
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
+        assert '  - "*.tmp"' in content, "ignores entry should be quoted"
+        assert "  - writing" in content, "apparati entry should NOT be quoted"
+        assert '  - "writing"' not in content, "apparati entry is being quoted — that's wrong"
 
 
 # ===========================================================================
@@ -866,3 +963,207 @@ class TestConstants:
         module type. The mapping should be a clean bijection.
         """
         assert set(MODULE_CHANGELOG_COMMAND.keys()) == set(APPARATUS_MODULE_TYPES)
+
+
+# ===========================================================================
+# ConfigSchema — Phase 1 additions
+# ===========================================================================
+
+class TestConfigSchema:
+    """
+    ConfigSchema is a TypedDict with total=False — all keys are NotRequired.
+    That means it has to accept partial dicts (which is the whole point —
+    configs accumulate incrementally). It also has to round-trip correctly
+    with the read/write helpers and not silently corrupt values that the
+    migration path depends on reading accurately.
+
+    These tests are specifically called out in the Phase 1 implementation
+    checklist. Don't delete them because they look trivial — each one is
+    pinning a real failure mode from the spec.
+    """
+
+    def test_config_schema_is_a_valid_typeddict(self):
+        """
+        TypedDict classes are structurally just type annotations — there's no
+        runtime enforcement — but we can verify the class is importable and
+        that it carries the expected annotations. If someone deletes the import
+        or renames the class, this fails loudly rather than silently.
+        """
+        from archivist.utils.config import ConfigSchema
+        assert isinstance(ConfigSchema.__annotations__, dict), (
+            "ConfigSchema has no __annotations__. "
+            "Someone broke the TypedDict definition."
+        )
+
+    def test_config_schema_accepts_subset_of_fields(self):
+        """
+        total=False means any subset of fields is valid — you're not required
+        to populate every key. This matters because init writes config
+        incrementally and we can't demand all fields at once.
+        """
+        from archivist.utils.config import ConfigSchema
+        # These are all legal partial instantiations — no TypeError should fire.
+        minimal: ConfigSchema = {"module-type": "general"}  # type: ignore[typeddict-item]
+        assert minimal["module-type"] == "general"
+
+        with_uuid: ConfigSchema = {"uuid": "some-uuid", "module-type": "vault"}  # type: ignore[typeddict-item]
+        assert with_uuid["uuid"] == "some-uuid"
+
+        empty: ConfigSchema = {}  # type: ignore[typeddict-item]
+        assert empty == {}
+
+    def test_read_archivist_config_returns_config_schema_compatible_value(self, tmp_path):
+        """
+        read_archivist_config() says it returns ConfigSchema | None. Verify that
+        the returned dict actually contains the keys we put in and that accessing
+        them via ConfigSchema-style keys works without KeyError. If the TypedDict
+        and the reader diverge, every typed call site is lying to itself.
+        """
+        from archivist.utils.config import ConfigSchema
+        archivist_dir = tmp_path / ".archivist"
+        archivist_dir.mkdir()
+        (archivist_dir / "config.yaml").write_text(
+            "uuid: deadbeef-0000-0000-0000-000000000000\n"
+            "module-type: library\n"
+            "apparatus: writing\n",
+            encoding="utf-8",
+        )
+        result = read_archivist_config(tmp_path)
+        assert result is not None, "read_archivist_config returned None for a valid config"
+        # Access via the hyphenated keys — exactly how typed callers do it.
+        config: ConfigSchema = result  # type: ignore[assignment]
+        assert config.get("uuid") == "deadbeef-0000-0000-0000-000000000000"
+        assert config.get("module-type") == "library"
+        assert config.get("apparatus") == "writing"
+
+    def test_write_archivist_config_accepts_config_schema_typed_dict(self, tmp_path):
+        """
+        write_archivist_config() takes a ConfigSchema. Verify it doesn't blow up
+        when passed one constructed properly, and that the output is readable.
+        This is the write-side partner to the read test above.
+        """
+        from archivist.utils.config import ConfigSchema
+        config: ConfigSchema = {  # type: ignore[typeddict-item]
+            "uuid": "cafebabe-0000-0000-0000-000000000000",
+            "module-type": "story",
+            "apparati": ["writing"],
+        }
+        write_archivist_config(tmp_path, config)
+        result = read_archivist_config(tmp_path)
+        assert result is not None
+        assert result.get("uuid") == "cafebabe-0000-0000-0000-000000000000"
+        assert result.get("module-type") == "story"
+
+    def test_apparatus_true_is_not_silently_coerced(self, tmp_path):
+        """
+        Legacy configs write `apparatus: true` (a YAML boolean). New configs
+        write `apparatus: writing` (a string name). read_archivist_config()
+        must surface the raw PyYAML-parsed value — it is NOT responsible for
+        deciding what to do with it. That's migrate's job.
+
+        If `apparatus: true` silently gets turned into something else at read
+        time, the migration path breaks because migrate never sees what it needs
+        to detect. Pin this explicitly.
+        """
+        (tmp_path / ".archivist").write_text(
+            "module-type: library\napparatus: true\n", encoding="utf-8"
+        )
+        result = read_archivist_config(tmp_path)
+        assert result is not None
+        # PyYAML parses bare `true` as a Python bool True. That's what we get back —
+        # not the string "true", not None, not "writing". Raw value, unprocessed.
+        assert result.get("apparatus") is True, (
+            f"apparatus: true was coerced to {result.get('apparatus')!r} at read time. "
+            "read_archivist_config must not do that — it's migrate's responsibility "
+            "to handle the legacy boolean form."
+        )
+
+    def test_apparatus_string_name_survives_read(self, tmp_path):
+        """
+        New-style `apparatus: writing` (a string name) must survive read
+        as-is. Belt and suspenders alongside the boolean test above — both
+        forms need to work, and they need to be distinguishable.
+        """
+        archivist_dir = tmp_path / ".archivist"
+        archivist_dir.mkdir()
+        (archivist_dir / "config.yaml").write_text(
+            "uuid: some-uuid\nmodule-type: library\napparatus: writing\n",
+            encoding="utf-8",
+        )
+        result = read_archivist_config(tmp_path)
+        assert result is not None
+        assert result.get("apparatus") == "writing", (
+            f"apparatus string name was mangled to {result.get('apparatus')!r}. "
+            "The string form must survive the read path intact."
+        )
+
+    def test_apparati_list_survives_read(self, tmp_path):
+        """
+        v3 configs write `apparati: [writing]` (a list). Verify it round-trips
+        as a proper Python list, not a string or some other YAML-mangled garbage.
+        This is the new canonical form — it has to work.
+        """
+        archivist_dir = tmp_path / ".archivist"
+        archivist_dir.mkdir()
+        (archivist_dir / "config.yaml").write_text(
+            "uuid: some-uuid\nmodule-type: library\napparati:\n  - writing\n",
+            encoding="utf-8",
+        )
+        result = read_archivist_config(tmp_path)
+        assert result is not None
+        apparati = result.get("apparati")
+        assert isinstance(apparati, list), (
+            f"apparati came back as {type(apparati).__name__!r}, not a list. "
+            "PyYAML should parse a block sequence as list — check the YAML."
+        )
+        assert apparati == ["writing"], (
+            f"apparati list mangled to {apparati!r}. Expected [\"writing\"]."
+        )
+
+    def test_apparatus_key_absent_when_config_uses_apparati(self, tmp_path):
+        """
+        A config written with the new `apparati` key must NOT also have
+        an `apparatus` key — they are distinct. config.get("apparatus")
+        should return None on a v3 config. If both keys are present, the
+        migration path will misread the state.
+        """
+        write_archivist_config(tmp_path, {  # type: ignore[arg-type]
+            "uuid": "aabbccdd-0000-0000-0000-000000000000",
+            "module-type": "library",
+            "apparati": ["writing"],
+        })
+        result = read_archivist_config(tmp_path)
+        assert result is not None
+        assert result.get("apparatus") is None, (
+            f"config.get(\"apparatus\") returned {result.get('apparatus')!r} on a v3 config. "
+            "The old key must be absent. If it's present, write_archivist_config "
+            "is writing the wrong key name."
+        )
+
+    def test_uuid_is_first_non_comment_key_written(self, tmp_path):
+        """
+        The spec requires uuid to be the first substantive field in the config.
+        This is both convention and a readability requirement — the UUID is the
+        stable identity of the module and should be immediately visible when
+        a human opens the file. If write_archivist_config buries it behind
+        other keys, that's a contract violation.
+        """
+        from archivist.utils.config import ConfigSchema
+        config: ConfigSchema = {  # type: ignore[typeddict-item]
+            "uuid": "00000000-0000-0000-0000-000000000000",
+            "module-type": "vault",
+            "apparati": ["writing"],
+        }
+        write_archivist_config(tmp_path, config)
+        content = (tmp_path / ".archivist" / "config.yaml").read_text(encoding="utf-8")
+        # Strip the comment header line(s) and find the first substantive key.
+        non_comment_lines = [
+            line for line in content.splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        assert non_comment_lines, "write_archivist_config produced no non-comment content"
+        first_key_line = non_comment_lines[0]
+        assert first_key_line.startswith("uuid:"), (
+            f"uuid was not the first key written. First key line: {first_key_line!r}. "
+            "The UUID is the module's stable identity — it goes first."
+        )

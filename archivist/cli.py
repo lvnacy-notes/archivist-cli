@@ -4,6 +4,9 @@ archivist — Obsidian vault frontmatter and archive management tools.
 Usage:
     archivist init
 
+    archivist add                     <url> [path] [git-flags...] [--dry-run]
+    archivist deinit                  <path> [git-flags...] [--retain] [--dry-run]
+
     archivist frontmatter add            -p <prop> [-v <value>] [--overwrite] [--dry-run]
     archivist frontmatter remove         -p <prop> [--dry-run]
     archivist frontmatter rename         -p <old> -n <new> [--dry-run]
@@ -219,6 +222,113 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action = "store_true",
         help = "Preview without writing any files"
+    )
+
+
+    # -----------------------------------------------------------------------
+    # add
+    # -----------------------------------------------------------------------
+
+    add_module_p = subparsers.add_parser(
+        "add",
+        help = "Clone a module and register it with the Apparatus",
+        description = (
+            "Clones a remote module as a git submodule (if inside a git repo) or\n"
+            "a standalone clone (if not). Registers the module in the Apparatus\n"
+            "registry and records the containment relationship if the current\n"
+            "directory is a registered superproject.\n\n"
+            "Git runs first. If git fails, nothing is written to the registry.\n"
+            "The module doesn't exist until git says it does.\n\n"
+            "Argument ordering matters when using passthrough flags — url and\n"
+            "path must come before any git flags you're passing through:\n\n"
+            "    archivist add <url> [path] [-- <git-flags>...]\n\n"
+            "Flags after the known arguments are forwarded to git as-is.\n"
+            + fmt_examples(
+                "archivist add git@github.com:user/repo.git",
+                "archivist add git@github.com:user/repo.git modules/repo",
+                "archivist add git@github.com:user/repo.git modules/repo --depth 1",
+                "archivist add git@github.com:user/repo.git --dry-run",
+            )
+        ),
+        formatter_class = ArchivistHelpFormatter,
+    )
+    add_module_p.add_argument(
+        "url",
+        help = "Remote URL to clone or add as a submodule.",
+    )
+    add_module_p.add_argument(
+        "path",
+        nargs = "?",
+        default = None,
+        metavar = "PATH",
+        help = "Local destination path. Defaults to whatever git decides.",
+    )
+    add_module_p.add_argument(
+        "passthrough",
+        nargs = argparse.REMAINDER,
+        help = "Additional flags forwarded directly to git. Put these last.",
+    )
+    add_module_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Print the git command and registration plan without executing either",
+    )
+
+    # -----------------------------------------------------------------------
+    # deinit
+    # -----------------------------------------------------------------------
+
+    deinit_p = subparsers.add_parser(
+        "deinit",
+        help = "Deregister a module and remove it from the Apparatus",
+        description = (
+            "Removes a module from the Apparatus registry and from git.\n\n"
+            "Operation order is non-negotiable: Apparatus first, git second.\n"
+            "If git runs first and succeeds, config.yaml is gone — the registry\n"
+            "has lost its recovery information. Apparatus cleanup fails? Module\n"
+            "is still on disk; retry is possible. Reverse the order and you get\n"
+            "an unrecoverable mess. Don't.\n\n"
+            "Confirmation prompt fires even with --dry-run, because a dry run\n"
+            "that skips the confirmation tells you nothing useful about what\n"
+            "would actually happen.\n\n"
+            "If git already ran (manually or in a previous failed attempt) and\n"
+            "only the registry needs cleaning, use --retain.\n\n"
+            "Flags after the known arguments are forwarded to git as-is:\n\n"
+            "    archivist deinit <path> [-- <git-flags>...]\n"
+            + fmt_examples(
+                "archivist deinit modules/repo",
+                "archivist deinit modules/repo --retain",
+                "archivist deinit modules/repo --dry-run",
+            )
+        ),
+        epilog = fmt_warning(
+            "This operation removes a module from the registry and from disk.\n"
+            "  Apparatus cleanup runs first. Git cleanup runs second.\n"
+            "  There is no undo. Use --dry-run first. You know the drill."
+        ),
+        formatter_class = ArchivistHelpFormatter,
+    )
+    deinit_p.add_argument(
+        "path",
+        help = "Path to the module to remove.",
+    )
+    deinit_p.add_argument(
+        "passthrough",
+        nargs = argparse.REMAINDER,
+        help = "Additional flags forwarded directly to git submodule deinit. Put these last.",
+    )
+    deinit_p.add_argument(
+        "--retain",
+        action = "store_true",
+        help = (
+            "Registry cleanup only — skip the git operation entirely. "
+            "Use when the git step already ran and only the registry needs cleaning."
+        ),
+    )
+    deinit_p.add_argument(
+        "--dry-run",
+        action = "store_true",
+        help = "Preview the Apparatus changes and git command without executing either",
     )
 
 
@@ -855,6 +965,16 @@ def build_parser() -> argparse.ArgumentParser:
         help = "Preview the migration plan without writing or deleting anything"
     )
 
+    # -----------------------------------------------------------------------
+    # _registry-sync (internal — not user-facing)
+    # -----------------------------------------------------------------------
+
+    subparsers.add_parser(
+        "_registry-sync",
+        help = argparse.SUPPRESS,
+        description = argparse.SUPPRESS,
+    )
+
     return parser
 
 
@@ -959,3 +1079,15 @@ def main():
     elif args.command == "migrate":
         from archivist.commands.migrate import run
         run(args)
+
+    elif args.command == "add":
+        from archivist.commands.add import run
+        run(args)
+ 
+    elif args.command == "deinit":
+        from archivist.commands.deinit import run
+        run(args)
+ 
+    elif args.command == "_registry-sync":
+        from archivist.commands.hooks.install import run_registry_sync
+        run_registry_sync()

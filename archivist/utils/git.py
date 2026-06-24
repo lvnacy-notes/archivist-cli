@@ -231,6 +231,42 @@ def get_git_changes(
     )
 
 
+def get_git_remotes(git_root: Path) -> dict[str, str]:
+    """
+    Return all configured git remotes as {name: fetch_url}.
+
+    Uses `git remote -v` and parses fetch lines only — push URLs are the
+    same 99% of the time and showing both would just be noise. If git
+    explodes or there are no remotes configured, returns an empty dict.
+    The caller decides what to do with nothing; this function doesn't care.
+    """
+    try:
+        output = subprocess.check_output(
+            ["git", "remote", "-v"],
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=git_root,
+        )
+    except subprocess.CalledProcessError:
+        return {}
+
+    remotes: dict[str, str] = {}
+    for line in output.strip().splitlines():
+        # Format: <name>\t<url> (fetch)  OR  <name>\t<url> (push)
+        # We only want fetch lines. Push URLs are the same until they're not,
+        # and when they're not it's not our fucking problem.
+        if not line.endswith("(fetch)"):
+            continue
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        name = parts[0].strip()
+        url = parts[1].replace("(fetch)", "").strip()
+        remotes[name] = url
+
+    return remotes
+
+
 def get_project_name(git_root: Path) -> str:
     return git_root.name.lower().replace("'", "").replace(" ", "-")
 

@@ -16,12 +16,18 @@ These two commands do not overlap. `install` never touches a local repo.
 import argparse
 import os
 import stat
+import subprocess
+import sys
 from pathlib import Path
 
 from archivist.utils import (
+    get_module_by_uuid,
+    get_repo_root,
     print_dry_run_header,
     progress,
+    read_archivist_config,
     success,
+    update_module_sync,
     warning,
 )
 
@@ -130,6 +136,20 @@ case "$CHOICE" in
         echo "  Proceeding without manifest or changelog."
         ;;
 esac
+
+# ---------------------------------------------------------------------------
+# Registry sync — non-blocking; runs after the changelog/manifest check
+# ---------------------------------------------------------------------------
+# Update this module's last_synced_at timestamp in ~/.archivist/registry.db.
+# Both conditions must hold: archivist must be on PATH (already confirmed
+# above, but checked again here for explicitness) and the registry must
+# exist. Unregistered repos are not an error — sync exits 0 silently.
+# Failure at any point warns and proceeds; a registry hiccup must never
+# abort a commit.
+if command -v archivist &>/dev/null && [ -d "$HOME/.archivist" ]; then
+    archivist _registry-sync 2>/dev/null || \
+        echo "  ⚠️  archivist: registry sync failed (non-fatal — commit proceeding)"
+fi
 
 exit 0
 """
@@ -248,7 +268,6 @@ def _resolve_hooks_dir(repo_path: Path) -> Path:
 
 def _get_submodule_paths(git_root: Path) -> list[Path]:
     """Return resolved paths for all initialized submodules in git_root."""
-    import subprocess
     try:
         output = subprocess.check_output(
             ["git", "submodule", "status"],
@@ -354,8 +373,6 @@ def run_sync(args: argparse.Namespace) -> None:
     detected, offers to cascade into each one. Does not touch global templates.
     Run per-project. Re-running is safe.
     """
-    from archivist.utils import get_repo_root
-
     git_root = get_repo_root()
     dry_run = getattr(args, "dry_run", False)
 
@@ -386,3 +403,46 @@ def run_sync(args: argparse.Namespace) -> None:
     else:
         if not dry_run:
             success("\n  Hooks synced.")
+
+
+def run_registry_sync() -> None:
+    """
+    `archivist _registry-sync` — internal subcommand, called by the pre-commit hook.
+
+    Reads the UUID from .archivist/config.yaml, looks up the module in the
+    registry, and calls update_module_sync() to stamp the current path and
+    last_synced_at. Exits 0 in every scenario — unregistered modules, missing
+    registry, connection errors, all of it. This command runs on every
+    commit; a non-zero exit from a pre-commit hook aborts the commit. That
+    must never happen here.
+
+    Takes no arguments — it reads everything it needs (the repo root, the
+    config, the UUID) from the environment it's invoked in. There was an
+    `args: argparse.Namespace` parameter here that nothing ever touched.
+    Gone. Don't bring it back just to match some dispatch table's vibes.
+
+    Not user-facing. Suppressed from help output. Don't call it manually
+    unless you enjoy doing the hook's job for it.
+    """
+
+    try:
+        git_root = get_repo_root()
+        config = read_archivist_config(git_root)
+        if not config:
+            sys.exit(0)
+
+        uuid = config.get("uuid")
+        if not uuid or not isinstance(uuid, str):
+            sys.exit(0)
+
+        # Unregistered module — not an error, just nothing to sync
+        if not get_module_by_uuid(uuid):
+            sys.exit(0)
+
+        update_module_sync(uuid, git_root)
+
+    except Exception:
+        # Swallow everything. Exit 0. The commit proceeds.
+        pass
+
+    sys.exit(0)

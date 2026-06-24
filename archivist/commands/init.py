@@ -8,17 +8,30 @@ clobbers existing config without asking.
 
 import argparse
 import importlib.resources
+import subprocess
 import sys
+import uuid as _uuid_module
 from pathlib import Path
+
+from archivist.commands.hooks.install import install_hooks_local
 
 from archivist.utils import (
     APPARATUS_MODULE_TYPES,
     ConfigSchema,
+    add_module_to_apparatus,
+    error,
     get_archivist_config_path,
+    get_project_name,
+    get_registry_dir,
     get_repo_root,
-    read_archivist_config,
+    init_registry,
     progress,
+    prompt_apparatus_names,
+    read_archivist_config,
+    register_apparatus,
+    register_module,
     success,
+    warning,
     write_archivist_config,
 )
 
@@ -91,7 +104,6 @@ def _confirm(question: str, default: bool = True) -> bool:
 
 def _install_hooks_local(git_root: Path, dry_run: bool = False) -> None:
     """Install hooks into this repo only. Global templates are the user's call."""
-    from archivist.commands.hooks.install import install_hooks_local
     install_hooks_local(git_root, dry_run=dry_run)
 
 
@@ -132,14 +144,204 @@ def _prompt_templater_mode() -> str:
     )
 
 
+def _check_or_init_git(dry_run: bool) -> Path:
+    """
+    Ensure we're inside a git repo before proceeding — or create one.
+
+    Must run before get_repo_root(). That function shells out to
+    git rev-parse --show-toplevel and exits non-zero if there's no repo,
+    which means sys.exit(1) before init gets a chance to offer git init.
+    Check first. Init if needed. Then proceed.
+    """
+    cwd = Path.cwd()
+    if (cwd / ".git").exists():
+        return get_repo_root()
+
+    print(
+        "\n  No git repo here. archivist lives inside git repos — "
+        "we can create one right now, or you can go find a directory "
+        "that already has its life together."
+    )
+    if not _confirm("Run git init in the current directory?", default=True):
+        progress("Fair enough. Come back when you have a repo.")
+        sys.exit(0)
+
+    if dry_run:
+        progress(f"  [dry-run] Would run: git init {cwd}")
+        return cwd  # best we can do without an actual repo
+
+    try:
+        subprocess.run(["git", "init"], check=True, cwd=cwd)
+        success("  git init complete.")
+    except subprocess.CalledProcessError as e:
+        error(f"git init failed and now we're both stuck: {e}")
+        sys.exit(1)
+
+    return get_repo_root()
+
+
+def _first_run_registry_setup(git_root: Path, dry_run: bool) -> None:
+    """
+    Bootstrap ~/.archivist/ on the first archivist init run on this machine.
+
+    Runs exactly once — every subsequent call finds the directory and returns
+    immediately. init_registry() is idempotent, so partial failures on a
+    previous run clean up correctly on retry.
+    """
+    registry_dir = get_registry_dir()
+    if registry_dir.exists():
+        return
+
+    print(
+        "\n  First time running archivist on this machine. "
+        "~/.archivist/ doesn't exist yet — that's the registry where Archivist "
+        "tracks every module you've registered. Setting it up now."
+    )
+
+    if dry_run:
+        progress(
+            f"  [dry-run] Would create: {registry_dir}\n"
+            f"  [dry-run] Would run: git init {registry_dir}\n"
+            f"  [dry-run] Would create: registry schema (apparati, modules, module_bays, module_apparatus)"
+        )
+        return
+
+    init_registry()
+    success(f"  Registry initialized: {registry_dir}")
+    _prompt_registry_remote(git_root, registry_dir)
+
+
+def _prompt_registry_remote(git_root: Path, registry_dir: Path) -> None:
+    """
+    Prompt for a git remote for the ~/.archivist/ registry repo.
+
+    The registry remote is separate from any module's remote — it's where
+    the registry itself gets backed up so archivist restore can function on
+    a new machine. Optional in Phase 1 (automated push isn't implemented yet),
+    but set it now or you'll be doing it manually later when you care more.
+
+    Lists the current module's remotes as URL examples since the user is
+    probably on the same hosting account.
+    """
+    print(
+        "\n  ~/.archivist/ is its own git repo. Give it a remote and Archivist "
+        "can back up your registry so you can restore it on a new machine.\n"
+        "  Optional — set it later with:\n"
+        "    git -C ~/.archivist remote add origin <url>"
+    )
+
+    try:
+        result = subprocess.run(
+            ["git", "remote", "-v"],
+            capture_output=True, text=True, check=True, cwd=git_root,
+        )
+        fetch_lines = [l for l in result.stdout.strip().splitlines() if "(fetch)" in l]
+        if fetch_lines:
+            print("\n  Your current repo's remotes (for reference):")
+            for line in fetch_lines:
+                print(f"    {line}")
+    except subprocess.CalledProcessError:
+        pass  # no remotes configured — say nothing
+
+    raw_url = input("\n  Registry remote URL (or Enter to skip): ").strip()
+    if not raw_url:
+        warning(
+            "  No registry remote set. archivist restore won't work without one.\n"
+            "  Set it later: git -C ~/.archivist remote add origin <url>"
+        )
+        return
+
+    try:
+        subprocess.run(
+            ["git", "remote", "add", "origin", raw_url],
+            check=True, cwd=registry_dir,
+        )
+        success(f"  Registry remote set: {raw_url}")
+    except subprocess.CalledProcessError:
+        warning(
+            f"  Couldn't add remote '{raw_url}'. Do it yourself:\n"
+            f"    git -C ~/.archivist remote add origin {raw_url}"
+        )
+
+
+def _resolve_git_remote(git_root: Path) -> tuple[str | None, str | None]:
+    """
+    Resolve git_remote (URL) and git_remote_name for this module. Spec §9.
+
+    Reads git remote -v from git_root:
+    - One remote: use it automatically, no prompt.
+    - Multiple remotes: present the list and ask which one is the Apparatus remote.
+    - No remotes: offer manual URL entry or skip.
+
+    Returns (url, name). Either or both may be None if the user skips.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "remote", "-v"],
+            capture_output=True, text=True, check=True, cwd=git_root,
+        )
+        fetch_lines = [
+            l for l in result.stdout.strip().splitlines()
+            if "(fetch)" in l
+        ]
+    except subprocess.CalledProcessError:
+        fetch_lines = []
+
+    if not fetch_lines:
+        print(
+            "\n  No git remotes found. archivist restore needs a remote URL "
+            "to clone this module from."
+        )
+        raw = input("  Remote URL (or Enter to skip): ").strip()
+        if not raw:
+            warning("  No git_remote set. archivist restore won't work for this module.")
+            return None, None
+        return raw, None
+
+    remotes: list[tuple[str, str]] = []
+    for line in fetch_lines:
+        parts = line.split("\t", 1)
+        if len(parts) == 2:
+            name = parts[0].strip()
+            url = parts[1].replace(" (fetch)", "").strip()
+            remotes.append((name, url))
+
+    if len(remotes) == 1:
+        name, url = remotes[0]
+        progress(f"  Using git remote '{name}': {url}")
+        return url, name
+
+    # Multiple remotes — make them pick
+    print("\n  Multiple remotes found. Which one is this module's Apparatus remote?")
+    options = [f"{name}  ({url})" for name, url in remotes] + ["Enter URL manually", "Skip"]
+    choice = _prompt("Select:", options)
+
+    if choice == "Skip":
+        warning("  No git_remote set. archivist restore won't work for this module.")
+        return None, None
+
+    if choice == "Enter URL manually":
+        raw = input("  Remote URL: ").strip()
+        return (raw, None) if raw else (None, None)
+
+    for name, url in remotes:
+        if choice.startswith(name):
+            return url, name
+
+    return None, None
+
+
 def run(args: argparse.Namespace) -> None:
-    git_root = get_repo_root()
-    existing: ConfigSchema | None = read_archivist_config(git_root)
     dry_run = getattr(args, "dry_run", False)
 
+    # --- Git context check: must run before get_repo_root() ---
+    # get_repo_root() exits on no-repo. We want to offer git init first.
+    git_root = _check_or_init_git(dry_run)
+
+    existing: ConfigSchema | None = read_archivist_config(git_root)
     print(f"\n  📁 Repo root: {git_root}")
 
-    # --- Existing config ---
+    # --- Existing config: show it and offer update ---
     if existing is not None:
         existing_path = get_archivist_config_path(git_root)
         success(f"Found existing config: {existing_path.relative_to(git_root)}")
@@ -153,51 +355,101 @@ def run(args: argparse.Namespace) -> None:
             progress("Done.")
             return
 
-    # --- Apparatus project? ---
-    is_apparatus = _confirm("Is this an Apparatus project?", default=True)
+    # --- First-run registry bootstrap (idempotent; skips if already present) ---
+    _first_run_registry_setup(git_root, dry_run)
+
+    # --- Apparatus membership and module type ---
+    is_apparatus = _confirm("Is this module part of an Apparatus?", default=True)
 
     if is_apparatus:
-        module_type = _prompt(
-            "Select module type:",
-            APPARATUS_MODULE_TYPES,
-        )
-        config: ConfigSchema = {
-            "apparatus":   "true",
-            "module-type": module_type,
-        }
-        if module_type == "library":
-            print("\n  Works directory (relative to repo root).")
-            print("  This is where archivist scans for catalogued works.")
-            works_dir = input("  works-dir [works]: ").strip() or "works"
-            config["works-dir"] = works_dir
+        apparatus_names: list[str] = prompt_apparatus_names()
+        module_type = _prompt("Select module type:", APPARATUS_MODULE_TYPES)
     else:
+        apparatus_names = []
         module_type = "general"
-        config: ConfigSchema = {
-            "apparatus":   "false",
-            "module-type": module_type,
-        }
 
-    # --- Custom changelog output directory (optional) ---
+    # --- Config fields (UUID prepended below after registry writes) ---
+    config: ConfigSchema = {"module-type": module_type}  # type: ignore[typeddict-item]
+    if apparatus_names:
+        config["apparati"] = apparatus_names  # type: ignore[typeddict-item]
+
+    if module_type == "library":
+        print("\n  Works directory (relative to repo root).")
+        print("  This is where archivist scans for catalogued works.")
+        config["works-dir"] = input("  works-dir [works]: ").strip() or "works"  # type: ignore[typeddict-item]
+
     print("\n  Changelog output directory (relative to repo root).")
     print("  Leave blank to use defaults (ARCHIVE/ or ARCHIVE/CHANGELOG/ by module type).")
     changelog_dir = input("  changelog-output-dir: ").strip()
     if changelog_dir:
-        config["changelog-output-dir"] = changelog_dir
+        config["changelog-output-dir"] = changelog_dir  # type: ignore[typeddict-item]
 
-    # --- Templater mode ---
-    config["templater"] = _prompt_templater_mode()
+    config["templater"] = _prompt_templater_mode()  # type: ignore[typeddict-item]
+    config["ignores"] = []  # type: ignore[typeddict-item]
 
-    # --- Ignores (always seeded, filled in by the user afterward) ---
-    config["ignores"] = []
+    # --- git_remote resolution (apparatus modules only; spec §9) ---
+    git_remote: str | None = None
+    git_remote_name: str | None = None
+    if is_apparatus:
+        print("\n  Resolving this module's git remote...")
+        git_remote, git_remote_name = _resolve_git_remote(git_root)
+        if git_remote:
+            config["git-remote"] = git_remote  # type: ignore[typeddict-item]
+        if git_remote_name:
+            config["git-remote-name"] = git_remote_name  # type: ignore[typeddict-item]
+
+    # --- UUID: registry is source of truth for apparatus modules ---
+    #
+    # For apparatus modules: register_apparatus() + register_module() run now,
+    # before the config write, so the UUID flows registry → config (per handoff
+    # pattern). Both calls are idempotent upserts — safe to run before the user
+    # confirms. Worst case they say "no" and we've done a registry upsert that's
+    # self-consistent with the next run.
+    #
+    # For standalone modules: preserve existing UUID or generate a fresh one.
+    existing_uuid: str | None = (existing or {}).get("uuid")  # type: ignore[assignment]
+    module_uuid: str
+
+    if is_apparatus and not dry_run:
+        assert apparatus_names  # non-empty whenever is_apparatus is True
+        primary_apparatus, *extra_apparati = apparatus_names
+        register_apparatus(primary_apparatus, git_remote = None)  # registry remote ≠ module remote
+        module_uuid = register_module(
+            apparatus_name = primary_apparatus,
+            name = get_project_name(git_root),
+            module_type = module_type,
+            path = git_root,
+            git_remote = git_remote,
+            git_remote_name = git_remote_name,
+        )
+        # register_module only wires up ONE apparatus association at creation
+        # time — every additional pick beyond the first needs its own explicit
+        # membership row via the junction table. register_apparatus() is an
+        # idempotent upsert either way, so re-running init stays safe.
+        for extra_name in extra_apparati:
+            extra_uuid = register_apparatus(extra_name, git_remote = None)
+            add_module_to_apparatus(module_uuid, extra_uuid)
+    else:
+        module_uuid = existing_uuid or str(_uuid_module.uuid4())
+
+    # uuid is always the first field written to config — spec requirement
+    final_config: ConfigSchema = { "uuid": module_uuid }  # type: ignore[typeddict-item]
+    final_config.update(config)  # type: ignore[typeddict-item]
 
     # --- Preview ---
-    print(f"\n  .archivist/config.yaml will be written as:")
-    for k, v in config.items():
-        print(f"     {k}: {v}")
+    print("\n  .archivist/config.yaml will be written as:")
+    for k, v in final_config.items():
+        print(f"     { k }: { v }")
 
     if dry_run:
-        progress("  [dry-run] No files written.")
-        if is_apparatus and module_type == "library":
+        progress("\n  [dry-run] No files written.")
+        if is_apparatus:
+            apparati_str = ", ".join(f"'{n}'" for n in apparatus_names)
+            progress(
+                f"  [dry-run] Would register apparatus/apparati {apparati_str} "
+                f"and upsert module '{get_project_name(git_root)}'."
+            )
+        if module_type == "library":
             progress("  [dry-run] Would write: .archivist/sample-changelog.py")
         return
 
@@ -206,10 +458,10 @@ def run(args: argparse.Namespace) -> None:
         progress("Aborted.")
         sys.exit(0)
 
-    write_archivist_config(git_root, config)
-    success(f"Written: .archivist/config.yaml")
+    write_archivist_config(git_root, final_config)
+    success("Written: .archivist/config.yaml")
 
-    if is_apparatus and module_type == "library":
+    if module_type == "library":
         _write_sample_changelog(git_root)
 
     # --- Confirm hook install (separate decision from config) ---

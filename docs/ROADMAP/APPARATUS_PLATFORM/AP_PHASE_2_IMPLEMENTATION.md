@@ -6,7 +6,7 @@ category:
   - cli
 affiliations:
 created: 2026-05-21
-modified: 2026-05-23
+modified: 2026-06-08
 version:
 related:
   - "[[APPARATUS_PLATFORM]]"
@@ -20,7 +20,7 @@ tags:
 
 > Phase 1 ships first. Full stop. If Phase 1 is not committed, tested, and stable, this document does not exist yet.
 
-Phase 2 adds three commands — `muster`, `distribute`, `broadcast` — and the scope resolution machinery they all depend on. These commands are read-and-fan-out operations on the registry Phase 1 built. They require a correct, populated registry to do anything useful. Implement on top of a working Phase 1, not alongside it.
+Phase 2 adds three commands — `census`, `distribute`, `broadcast` — and the scope resolution machinery they all depend on. These commands are read-and-fan-out operations on the registry Phase 1 built. They require a correct, populated registry to do anything useful. Implement on top of a working Phase 1, not alongside it.
 
 ---
 
@@ -28,11 +28,11 @@ Phase 2 adds three commands — `muster`, `distribute`, `broadcast` — and the 
 
 Before writing a single line of Phase 2 code, confirm:
 
-- [ ] All Phase 1 tests pass: `pytest -v`
-- [ ] `archivist init` registers a module in the registry cleanly
-- [ ] `archivist add` registers a submodule and creates a `module_bays` row
-- [ ] `archivist deinit` decimates correctly and respects operation order
-- [ ] Registry isolation fixture from Phase 1 tests is extractable to `conftest.py` for reuse
+- [x] All Phase 1 tests pass: `pytest -v`
+- [x] `archivist init` registers a module in the registry cleanly
+- [x] `archivist add` registers a submodule and creates a `module_bays` row
+- [x] `archivist deinit` decimates correctly and respects operation order
+- [x] Registry isolation fixture from Phase 1 tests is extractable to `conftest.py` for reuse
 
 If any of the above are red, stop and fix Phase 1.
 
@@ -43,7 +43,7 @@ If any of the above are red, stop and fix Phase 1.
 ```
 1. Audit: get_repo_root() at import time    — must happen before broadcast exists
 2. Scope resolution utility                 — everything depends on this
-3. archivist muster                         — read-only; validates scope resolution
+3. archivist census                         — read-only; validates scope resolution
 4. archivist distribute                     — file operations; simpler than command execution
 5. archivist broadcast                      — most complex; depends on audit results
 6. CLI parser updates                       — alongside commands
@@ -94,9 +94,9 @@ All three Phase 2 commands share identical scope resolution logic. It lives in a
 
 > ⚠️ `--type` is a filter on an established scope. It must fail loudly if used alone:
 > ```
-> archivist muster --type library
+> archivist census --type library
 > ✗ --type requires --apparatus or --vault to establish scope. Try:
->   archivist muster --apparatus writing --type library
+>   archivist census --apparatus writing --type library
 > ```
 > This cannot be enforced by argparse alone since `--type` is a valid standalone argument syntactically. Validate in `resolve_scope()` or at the top of each command's `run()`.
 
@@ -106,10 +106,10 @@ All three Phase 2 commands share identical scope resolution logic. It lives in a
 
 ---
 
-## 3. `archivist muster`
+## 3. `archivist census`
 
 ```
-archivist muster [scope selector] [--include-decimated]
+archivist census [scope selector] [--include-decimated]
 ```
 
 Read-only status table. No `--dry-run`. No writes. No side effects.
@@ -125,7 +125,7 @@ Read-only status table. No `--dry-run`. No writes. No side effects.
 - [ ] Decimated modules: excluded unless `--include-decimated`; when shown, mark distinctly (e.g., strikethrough or `[decimated]` label)
 - [ ] No `--dry-run` argument; do not add one; the command has no side effects to dry-run
 
-> ⚠️ Path validity is `path.exists()`. That is the entire check. Do not call `get_repo_root()`. Do not call any git subprocess. Do not attempt to verify the path is a git repo. A directory that exists but isn't a git repo shows `✓` — the user's concern, not muster's. A path that doesn't exist shows `✗ PATH NOT FOUND`. Simple.
+> ⚠️ Path validity is `path.exists()`. That is the entire check. Do not call `get_repo_root()`. Do not call any git subprocess. Do not attempt to verify the path is a git repo. A directory that exists but isn't a git repo shows `✓` — the user's concern, not census's. A path that doesn't exist shows `✗ PATH NOT FOUND`. Simple.
 
 > ⚠️ `last seal` comes from the **apparatus DB** (`~/.archivist/[apparatus].db`), not from the per-project `ARCHIVE/archive.db`. These are different tables. If the apparatus DB is inaccessible (missing, corrupted), fall back to `—` for all modules in that apparatus. Do not crash. Do not try to read `ARCHIVE/archive.db` as a fallback — that is a different data source with a different schema.
 
@@ -133,7 +133,7 @@ Read-only status table. No `--dry-run`. No writes. No side effects.
 
 > 📌 Column alignment: fixed-width formatting matters for readability. The longest module name, path, and date in the result set determine column widths. Compute widths before rendering, not per-row. A ragged output table is an embarrassment.
 
-> 📌 `--include-decimated` is a muster-only flag. `distribute` and `broadcast` always operate on active modules only. Do not add this flag to those commands.
+> 📌 `--include-decimated` is a census-only flag. `distribute` and `broadcast` always operate on active modules only. Do not add this flag to those commands.
 
 ---
 
@@ -278,11 +278,11 @@ Hardcode the expected arg structure for each frontmatter subcommand in broadcast
       scope.add_argument("--module", metavar="NAME|UUID", action="append", dest="modules")
       parser.add_argument("--type", metavar="TYPE", dest="module_type")
   ```
-- [ ] `archivist muster` parser:
+- [ ] `archivist census` parser:
   ```python
-  muster_p = subparsers.add_parser("muster", help="Status report across registered modules.")
-  _add_scope_selectors(muster_p)
-  muster_p.add_argument("--include-decimated", action="store_true")
+  census_p = subparsers.add_parser("census", help="Status report across registered modules.")
+  _add_scope_selectors(census_p)
+  census_p.add_argument("--include-decimated", action="store_true")
   ```
 - [ ] `archivist distribute` parser:
   ```python
@@ -301,7 +301,7 @@ Hardcode the expected arg structure for each frontmatter subcommand in broadcast
   _add_scope_selectors(broadcast_p)
   broadcast_p.add_argument("--dry-run", action="store_true")
   ```
-- [ ] Dispatch: add `elif args.command == "muster"`, `"distribute"`, `"broadcast"` branches
+- [ ] Dispatch: add `elif args.command == "census"`, `"distribute"`, `"broadcast"` branches
 - [ ] Import new command modules at the top of `cli.py` dispatch section
 
 > ⚠️ `add_mutually_exclusive_group(required=True)` enforces that exactly one of `--apparatus`, `--vault`, or `--module` is provided. `--type` is outside the group and is optional. The `required=True` handles the "no scope selector → exit with error" requirement from the spec without needing manual validation in `run()`.
@@ -350,7 +350,7 @@ Building this fixture correctly once is better than rebuilding it in every test.
 
 All tests use `multi_module_registry` fixture and `monkeypatch.chdir()`.
 
-`archivist muster`:
+`archivist census`:
 - [ ] `--apparatus`: all active modules listed; decimated excluded
 - [ ] `--apparatus --include-decimated`: decimated module appears, marked
 - [ ] `--vault`: only modules under that vault listed, including vault itself
@@ -398,7 +398,7 @@ Before marking Phase 2 done:
 - [ ] All tests pass: `pytest -v`
 - [ ] No regressions in Phase 1 or pre-existing test suite
 - [ ] `get_repo_root()` audit findings resolved — no import-time calls remain
-- [ ] `archivist muster --apparatus <name>` produces correct aligned output on a real multi-module registry
+- [ ] `archivist census --apparatus <name>` produces correct aligned output on a real multi-module registry
 - [ ] `archivist distribute` does not stage files under any circumstances (verified with `git status`)
 - [ ] `archivist broadcast` restores working directory correctly after every module, including failures
 - [ ] `--dry-run` on both commands writes nothing and changes nothing

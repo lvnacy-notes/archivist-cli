@@ -30,7 +30,7 @@ from archivist.utils.output import error
 ConfigSchema = TypedDict('ConfigSchema', {
     'uuid':                 str,        # always present after init; first field written
     'module-type':          str,        # always present; one of APPARATUS_MODULE_TYPES
-    'apparatus':            str,        # apparatus name e.g. "writing"; absent for standalone
+    'apparati':             list[str],  # apparatus names; absent for standalone modules
     'vaults':               list[str],  # vault module names containing this module
     'git-remote':           str,        # remote URL; absent if not configured
     'git-remote-name':      str,        # human-readable remote label e.g. "origin"
@@ -204,10 +204,11 @@ def write_archivist_config(git_root: Path, config: ConfigSchema) -> None:
     migration with a confirmation gate and git instructions. This is the silent
     path for everything else that just needs the config written.
 
-    Scalar values are written as plain `key: value` pairs. The `ignores` key
-    is always written as a YAML block sequence, even when empty — so users
+    Scalar values are written as plain `key: value` pairs. Any list-typed
+    field is written as a YAML block sequence, even when empty — so users
     know it's there and don't have to guess the expected format when they go
-    to fill it in.
+    to fill it in. Glob patterns in `ignores` are quoted; other list fields
+    (apparati, vaults) are not.
     """
     archivist_dir = _get_archivist_dir(git_root)
 
@@ -223,14 +224,20 @@ def write_archivist_config(git_root: Path, config: ConfigSchema) -> None:
     lines = ["# archivist project configuration"]
 
     for key, value in config.items():
-        if key == "ignores":
-            lines.append("ignores:")
-            entries = value if isinstance(value, list) else []
-            for pattern in entries:
-                lines.append(f'  - "{ pattern }"')
+        if isinstance(value, list):
+            lines.append(f"{key}:")
+            entries = value
+            for item in entries:
+                # Glob patterns in ignores need quoting — they can contain
+                # characters YAML would otherwise interpret (*, ?, [], !).
+                # Apparatus names and vault names are slugs: no quoting needed.
+                if key == "ignores":
+                    lines.append(f'  - "{ item }"')
+                else:
+                    lines.append(f"  - { item }")
             if not entries:
                 # Write an empty block sequence so the key is visible and the
-                # format is unambiguous. A bare `ignores:` with no entries
+                # format is unambiguous. A bare `key:` with no entries
                 # parses as null in YAML — not what we want.
                 lines.append("  []")
         else:
