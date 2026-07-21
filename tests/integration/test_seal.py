@@ -27,7 +27,19 @@ Edge cases pinned here:
   - Sealed file is NOT picked up by find_active_changelog() on subsequent runs
   - DB transition: edition_shas.included_in goes from UUID → short_sha
   - Sealed filename suffix is the SHORT sha from `git rev-parse --short`
-  - Running seal twice against the same commit is idempotent
+  - Running seal twice against the same commit is idempotent — and does NOT
+    warn the second time, because the missing unsealed path is explained by
+    the sealed file sitting right next to it
+  - A genuinely missing changelog (no unsealed file, no sealed file either)
+    still warns — that's the actually-wrong case, not the rerun case
+  - Manifests get backfilled in place, never renamed
+  - A manifest relocated since the commit (normal vault reorg) is found by
+    filename search and backfilled at its new location, not blamed for
+    going missing
+  - A manifest with an ambiguous duplicate filename elsewhere is left
+    untouched on all candidates rather than guessed at
+  - A manifest with no trace anywhere in the repo is reported as an actual
+    deletion, not a reorg
 """
 
 import argparse
@@ -72,14 +84,48 @@ def _commit_changelog_and_get_shas(git_repo, changelog: Path) -> tuple[str, str]
     Uses explicit `git add <path>` rather than git_repo.commit() because we
     need to stage one specific file we've already written to disk, not write
     new content via the fixture's dict interface.
+
+    core.hooksPath is redirected to an empty directory before the commit.
+    --no-verify only suppresses pre-commit and commit-msg hooks — NOT
+    post-commit. Without this, the post-commit hook fires archivist changelog
+    seal and renames the changelog before the test can control it. All seal
+    tests invoke seal explicitly; the hook racing them causes non-deterministic
+    results depending on timing and hook installation state.
     """
+    no_hooks_dir = git_repo.path / ".git" / "no-hooks"
+    no_hooks_dir.mkdir(exist_ok=True)
     subprocess.run(
-        ["git", "add", str(changelog)],
-        cwd=git_repo.path, check=True, capture_output=True,
+        [
+            "git",
+            "config",
+            "core.hooksPath",
+            str(no_hooks_dir)
+        ],
+        cwd = git_repo.path,
+        check = True,
+        capture_output = True,
     )
     subprocess.run(
-        ["git", "commit", "-m", "add changelog for sealing"],
-        cwd=git_repo.path, check=True, capture_output=True,
+        [
+            "git",
+            "add",
+            str(changelog)
+        ],
+        cwd = git_repo.path,
+        check = True,
+        capture_output = True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "commit",
+            "--no-verify",
+            "-m",
+            "add changelog for sealing"
+        ],
+        cwd = git_repo.path,
+        check = True,
+        capture_output = True,
     )
     return _get_full_sha(git_repo.path), _get_short_sha(git_repo.path)
 
@@ -133,6 +179,80 @@ def _make_unsealed_changelog(
     path = output_dir / f"CHANGELOG-{today}.md"
     path.write_text(content, encoding="utf-8")
     return path
+
+
+def _make_manifest_content(sha_value: str = "") -> str:
+    """
+    Minimal manifest content — just enough frontmatter and body for seal's
+    backfill regexes to have something to grab. Doesn't need to match
+    _build_manifest_frontmatter()/_build_manifest_body() output verbatim;
+    seal only ever touches the commit-sha line and the table cell.
+
+    Pass sha_value to simulate an already-sealed manifest.
+    """
+    return (
+        f"---\n"
+        f"class: archive\n"
+        f"category:\n"
+        f"  - manifest\n"
+        f"  - edition\n"
+        f"commit-sha: {sha_value}\n"
+        f"---\n"
+        f"\n# Manifest — [[Test Edition]]\n\n"
+        f"| Field | Value |\n"
+        f"|-------|-------|\n"
+        f"| Commit SHA | [fill in after commit] |\n"
+    )
+
+
+def _commit_manifest_and_get_shas(git_repo, manifest_path: Path) -> tuple[str, str]:
+    """
+    Stage and commit the given manifest file. Returns (full_sha, short_sha).
+
+    core.hooksPath is redirected to a guaranteed-empty directory before the
+    commit. --no-verify only suppresses pre-commit and commit-msg hooks; it
+    explicitly does NOT suppress post-commit hooks. Without this, the
+    post-commit hook fires archivist changelog seal, which backfills the
+    manifest in-place — then the test renames the already-backfilled file
+    into position and can't distinguish the hook's work from seal's. All
+    seal tests call seal explicitly; we don't want the hook racing them.
+    """
+    no_hooks_dir = git_repo.path / ".git" / "no-hooks"
+    no_hooks_dir.mkdir(exist_ok=True)
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "core.hooksPath",
+            str(no_hooks_dir)
+        ],
+        cwd = git_repo.path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "add",
+            str(manifest_path)
+        ],
+        cwd = git_repo.path,
+        check = True,
+        capture_output = True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "commit",
+            "--no-verify",
+            "-m",
+            "add manifest for sealing"
+        ],
+        cwd = git_repo.path,
+        check = True,
+        capture_output = True,
+    )
+    return _get_full_sha(git_repo.path), _get_short_sha(git_repo.path)
 
 
 def _seed_db_with_claimed_sha(
@@ -231,6 +351,10 @@ class TestSealBasicMechanics:
         run_seal(_seal_args(full_sha))
 
         sealed = _find_sealed_changelog(archive, short_sha)
+        assert sealed is not None, (
+            f"No sealed file matching CHANGELOG-*-{short_sha}.md found in {archive}. "
+            "Seal silently failed to produce one."
+        )
         fm = extract_frontmatter(sealed.read_text(encoding="utf-8"))
         assert fm.get("commit-sha") == short_sha, (
             f"Expected commit-sha: {short_sha!r}, got: {fm.get('commit-sha')!r}. "
@@ -249,6 +373,10 @@ class TestSealBasicMechanics:
         run_seal(_seal_args(full_sha))
 
         sealed = _find_sealed_changelog(archive, short_sha)
+        assert sealed is not None, (
+            f"No sealed file matching CHANGELOG-*-{short_sha}.md found in {archive}. "
+            "Seal silently failed to produce one."
+        )
         content = sealed.read_text(encoding="utf-8")
         assert full_sha in content, (
             f"Full SHA {full_sha!r} not found anywhere in the sealed changelog. "
@@ -332,6 +460,10 @@ class TestSealBasicMechanics:
         run_seal(_seal_args(full_sha))
 
         sealed = _find_sealed_changelog(archive, short_sha)
+        assert sealed is not None, (
+            f"No sealed file matching CHANGELOG-*-{short_sha}.md found in {archive}. "
+            "Seal silently failed to produce one."
+        )
         content = sealed.read_text(encoding="utf-8")
         assert precious_note.strip() in content, (
             "Seal destroyed the user content below the sentinel. "
@@ -476,7 +608,9 @@ class TestSealDatabaseInteraction:
     """
 
     def test_edition_shas_transition_from_uuid_to_short_sha(
-        self, git_repo, monkeypatch
+        self,
+        git_repo,
+        monkeypatch
     ):
         """
         This is THE handoff. included_in goes from UUID (written by publication
@@ -504,7 +638,9 @@ class TestSealDatabaseInteraction:
         )
 
     def test_multiple_edition_shas_all_transition_atomically(
-        self, git_repo, monkeypatch
+        self,
+        git_repo,
+        monkeypatch
     ):
         """
         A publication changelog can claim multiple edition SHAs. Seal must
@@ -532,7 +668,9 @@ class TestSealDatabaseInteraction:
             )
 
     def test_changelogs_table_row_populated_after_seal(
-        self, git_repo, monkeypatch
+        self,
+        git_repo,
+        monkeypatch
     ):
         monkeypatch.chdir(git_repo.path)
         archive = git_repo.path / "ARCHIVE"
@@ -561,7 +699,9 @@ class TestSealDatabaseInteraction:
         )
 
     def test_no_archive_db_means_no_crash_and_no_db_created(
-        self, git_repo, monkeypatch
+        self,
+        git_repo,
+        monkeypatch
     ):
         """
         No archive.db → seal_changelog_in_db() is a documented no-op.
@@ -732,7 +872,9 @@ class TestSealEdgeCases:
             run_seal(argparse.Namespace(commit_sha=None))
 
     def test_exits_when_commit_sha_attribute_missing_from_namespace(
-        self, git_repo, monkeypatch
+        self,
+        git_repo,
+        monkeypatch
     ):
         """
         seal.py uses getattr with a None fallback. Test that a missing attribute
@@ -743,13 +885,19 @@ class TestSealEdgeCases:
             run_seal(argparse.Namespace())
 
     def test_missing_file_on_disk_produces_warning_not_crash(
-        self, git_repo, monkeypatch, capsys
+        self,
+        git_repo,
+        monkeypatch,
+        capsys
     ):
         """
-        File was committed, then disappeared from disk before seal ran.
-        Happens when a previous seal run got partway through and then crashed,
-        or someone manually renamed shit. Expected behavior: warn and skip,
-        don't explode. The warning goes to stderr via output.warning().
+        File was committed, then disappeared from disk before seal ran, and
+        there's no sealed counterpart sitting next to it either — this is
+        the genuinely-missing branch, not the "already sealed by a previous
+        run" branch (that one is silent now; see test_seal_manifest_backfill
+        and test_running_seal_twice_is_idempotent below). Expected behavior:
+        warn and skip, don't explode. The warning goes to stderr via
+        output.warning().
         """
         monkeypatch.chdir(git_repo.path)
         archive = git_repo.path / "ARCHIVE"
@@ -757,7 +905,8 @@ class TestSealEdgeCases:
 
         full_sha, short_sha = _commit_changelog_and_get_shas(git_repo, changelog)
 
-        # Yeet the file off disk between commit and seal
+        # Yeet the file off disk between commit and seal — and don't leave
+        # a sealed counterpart behind, or this exercises the wrong branch.
         changelog.unlink(missing_ok=True)
 
         # Must not raise
@@ -765,19 +914,24 @@ class TestSealEdgeCases:
 
         # The warning goes to stderr — check there, not stdout
         err = capsys.readouterr().err
-        assert "Skipping" in err or "manually" in err.lower(), (
-            "Expected a warning message about the missing file in stderr. "
+        assert "Skipping" in err and "isn't on disk" in err, (
+            "Expected a warning about the genuinely-missing file in stderr. "
             "Silent skips for missing files are how debugging becomes archaeology."
         )
 
     def test_running_seal_twice_is_idempotent(
-        self, git_repo, monkeypatch
+        self,
+        git_repo,
+        monkeypatch,
+        capsys
     ):
         """
         Idempotency. Full stop. Two seal runs against the same commit must
-        produce the same final state. The second run finds the unsealed filename
-        missing from disk (renamed by the first run), warns, and exits without
-        touching the already-sealed file.
+        produce the same final state. The second run finds the unsealed
+        filename missing from disk (renamed by the first run), checks for
+        the sealed counterpart, finds it, and skips SILENTLY — no warning.
+        Treating "already sealed by a previous run" as something worth
+        warning about was the original bug; this test pins the fix.
         """
         monkeypatch.chdir(git_repo.path)
         archive = git_repo.path / "ARCHIVE"
@@ -790,6 +944,7 @@ class TestSealEdgeCases:
         assert sealed is not None, "First seal run failed — test setup is broken."
         content_after_first = sealed.read_text(encoding="utf-8")
 
+        capsys.readouterr()  # discard first run's output, only the rerun matters here
         run_seal(_seal_args(full_sha))
 
         assert sealed.exists(), "Sealed file disappeared after second run."
@@ -800,4 +955,308 @@ class TestSealEdgeCases:
         assert len(list(archive.glob(f"CHANGELOG-*-{short_sha}.md"))) == 1, (
             "More than one sealed file found after running seal twice. "
             "The file was double-renamed somehow."
+        )
+
+        err = capsys.readouterr().err
+        assert err == "", (
+            f"Second seal run printed a warning when it shouldn't have: {err!r}. "
+            "A missing unsealed path with a sealed counterpart sitting right next "
+            "to it is the expected post-seal state, not an anomaly worth flagging."
+        )
+
+    def test_followup_commit_sweeping_up_a_sealed_rename_does_not_warn(
+        self,
+        git_repo,
+        monkeypatch,
+        capsys
+    ):
+        """
+        The bug this pins matches the documented workflow exactly (see
+        CLAUDE.md / module docstring): the post-commit hook fires on EVERY
+        commit, not just the one a user intends to seal. After step 5's
+        commit triggers seal, the rename it produces is deliberately left
+        unstaged — the user commits it separately or bundles it into their
+        next batch of work (step 7). The hook fires again on THAT commit
+        too, because it has no way to know in advance there's nothing left
+        to do.
+
+        _get_committed_files() used to call `git diff-tree` without -M,
+        so that follow-up commit got reported as a plain delete of the old
+        unsealed filename + add of the new sealed filename, instead of a
+        rename. The stale old name then leaked into changelog_candidates
+        for a commit that has nothing to do with that file's actual
+        sealing, full_path.exists() correctly came back False (the rename
+        already happened in the PRIOR commit), and seal warned about a
+        "deletion" that was never anything of the sort.
+
+        Fixed at the source with -M on the diff-tree call (matching
+        get_git_changes() in git.py), with the glob-based sealed-sibling
+        check as a second line of defense regardless.
+        """
+        monkeypatch.chdir(git_repo.path)
+        archive = git_repo.path / "ARCHIVE"
+        changelog = _make_unsealed_changelog(archive)
+
+        # Step 5: user commits work containing the unsealed changelog.
+        full_sha_c1, short_sha_c1 = _commit_changelog_and_get_shas(git_repo, changelog)
+
+        # Step 6: hook fires seal(C1) automatically.
+        run_seal(_seal_args(full_sha_c1))
+
+        sealed = _find_sealed_changelog(archive, short_sha_c1)
+        assert sealed is not None, "Seal run against C1 failed — test setup is broken."
+
+        # Step 7: the rename is left unstaged (by design) and gets swept
+        # into a later commit — standalone here, matching "committed
+        # separately" from the workflow.
+        subprocess.run(
+            [
+                "git",
+                "add",
+                "--all"
+            ],
+            cwd = git_repo.path,
+            check = True,
+            capture_output = True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "commit",
+                "--no-verify",
+                "-m",
+                "commit the sealed rename"
+            ],
+            cwd = git_repo.path,
+            check = True,
+            capture_output = True,
+        )
+        full_sha_c2 = _get_full_sha(git_repo.path)
+
+        capsys.readouterr()  # discard C1's seal output
+
+        # The hook fires automatically on C2 too — it doesn't know in
+        # advance there's nothing left to seal here.
+        run_seal(_seal_args(full_sha_c2))
+
+        assert sealed.exists(), (
+            "Sealed file got touched/renamed again when seal ran against the "
+            "follow-up commit. It should have recognized there's nothing new "
+            "to do and left the file exactly alone."
+        )
+
+        err = capsys.readouterr().err
+        assert err == "", (
+            f"Seal warned when run against the commit that merely bundled a "
+            f"previous seal's rename: {err!r}. The old unsealed filename "
+            "shouldn't even surface as a candidate for this commit once "
+            "rename detection (-M) is working — and even if it does, the "
+            "sealed sibling should be found before any warning fires."
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestSealManifestBackfill
+# ---------------------------------------------------------------------------
+
+class TestSealManifestBackfill:
+    """
+    Seal's other job: backfilling manifests in place. No rename, no DB —
+    just the commit-sha frontmatter line and the body table cell, same two
+    strings as the changelog path minus the file-locking step.
+
+    This class also pins the fix for seal's manifest-missing branch, which
+    used to assume a missing path meant deliberate deletion ("Bold move.")
+    instead of checking whether the file had simply moved during normal
+    vault reorganization — which it does, often, and is none of Archivist's
+    business to judge.
+    """
+
+    def test_manifest_backfilled_in_place_without_rename(
+        self, git_repo, monkeypatch
+    ):
+        """
+        Unlike changelogs, manifests never get a filename change. Same path
+        in, same path out — only the content changes.
+        """
+        monkeypatch.chdir(git_repo.path)
+        manifest_path = git_repo.path / "Editions" / "VolI-NoX-manifest.md"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(_make_manifest_content(), encoding="utf-8")
+
+        full_sha, short_sha = _commit_manifest_and_get_shas(git_repo, manifest_path)
+        run_seal(_seal_args(full_sha))
+
+        assert manifest_path.exists(), (
+            "Manifest got renamed or moved. Manifests stay exactly where they "
+            "are — that's the whole point of identifying them by naming "
+            "convention instead of an unsealed/sealed filename split."
+        )
+        fm = extract_frontmatter(manifest_path.read_text(encoding="utf-8"))
+        assert fm.get("commit-sha") == short_sha, (
+            f"Expected commit-sha: {short_sha!r} backfilled, got "
+            f"{fm.get('commit-sha')!r}."
+        )
+
+    def test_already_sealed_manifest_is_left_alone(self, git_repo, monkeypatch):
+        """
+        A manifest that already has a real SHA in commit-sha has already
+        been sealed. Don't touch it, don't double-backfill, don't blow up.
+        """
+        monkeypatch.chdir(git_repo.path)
+        manifest_path = git_repo.path / "Editions" / "VolI-NoY-manifest.md"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        pre_sealed = _make_manifest_content(sha_value="cafef00d")
+        manifest_path.write_text(pre_sealed, encoding="utf-8")
+
+        full_sha, _ = _commit_manifest_and_get_shas(git_repo, manifest_path)
+        run_seal(_seal_args(full_sha))
+
+        assert manifest_path.read_text(encoding="utf-8") == pre_sealed, (
+            "Already-sealed manifest content changed. "
+            "_is_already_sealed() should have short-circuited before any write."
+        )
+
+    def test_manifest_skip_count_reported_in_output(
+        self, git_repo, monkeypatch, capsys
+    ):
+        monkeypatch.chdir(git_repo.path)
+        manifest_path = git_repo.path / "Editions" / "VolV-NoR-manifest.md"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            _make_manifest_content(sha_value="deadbeef"), encoding="utf-8"
+        )
+
+        full_sha, _ = _commit_manifest_and_get_shas(git_repo, manifest_path)
+        run_seal(_seal_args(full_sha))
+
+        out = capsys.readouterr().out
+        assert "already backfilled" in out.lower(), (
+            "Expected the 'already backfilled — left alone' summary line for "
+            "a manifest that was already sealed. Either manifest_skipped_count "
+            "isn't incrementing or the summary line isn't printing."
+        )
+
+    def test_manifest_relocated_since_commit_gets_backfilled_at_new_location(
+        self, git_repo, monkeypatch, capsys
+    ):
+        """
+        The bug this pins: seal used to treat a missing manifest path as
+        proof of deliberate deletion and editorialized about it. Moving a
+        manifest during normal reorganization is not deletion — seal must
+        search the tree by filename and backfill wherever it actually landed.
+        """
+        monkeypatch.chdir(git_repo.path)
+        original_dir = git_repo.path / "Editions" / "VolI"
+        original_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = original_dir / "VolI-NoZ-manifest.md"
+        manifest_path.write_text(_make_manifest_content(), encoding="utf-8")
+
+        full_sha, short_sha = _commit_manifest_and_get_shas(git_repo, manifest_path)
+
+        # Simulate a manual reorg between commit and seal — no git mv, no
+        # second commit, just the file physically moving on disk.
+        new_dir = git_repo.path / "Editions" / "VolI-Reorganized"
+        new_dir.mkdir(parents=True, exist_ok=True)
+        new_path = new_dir / "VolI-NoZ-manifest.md"
+        manifest_path.rename(new_path)
+
+        run_seal(_seal_args(full_sha))
+
+        fm = extract_frontmatter(new_path.read_text(encoding="utf-8"))
+        assert fm.get("commit-sha") == short_sha, (
+            "Relocated manifest was not backfilled at its new location. "
+            "The rglob-by-filename fallback in seal.run() isn't finding it."
+        )
+        out = capsys.readouterr().out
+        assert "moved" in out.lower(), (
+            "Expected a note acknowledging the manifest moved, not silence "
+            "and not an accusation about deleting it."
+        )
+
+    def test_manifest_with_ambiguous_duplicate_filename_is_not_guessed_at(
+        self, git_repo, monkeypatch, capsys
+    ):
+        """
+        Two files with the same manifest filename in different directories
+        after the commit — seal must refuse to guess which one is the real
+        target. Both stay untouched; the warning lists both candidates so
+        the operator can resolve it by hand.
+        """
+        monkeypatch.chdir(git_repo.path)
+        original_dir = git_repo.path / "Editions" / "VolII"
+        original_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = original_dir / "VolII-NoW-manifest.md"
+        manifest_path.write_text(_make_manifest_content(), encoding="utf-8")
+
+        full_sha, _ = _commit_manifest_and_get_shas(git_repo, manifest_path)
+
+        # Move the original away AND drop a same-named decoy somewhere else.
+        decoy_dir_a = git_repo.path / "Editions" / "VolII-Archive-A"
+        decoy_dir_b = git_repo.path / "Editions" / "VolII-Archive-B"
+        decoy_dir_a.mkdir(parents=True, exist_ok=True)
+        decoy_dir_b.mkdir(parents=True, exist_ok=True)
+        candidate_a = decoy_dir_a / "VolII-NoW-manifest.md"
+        candidate_b = decoy_dir_b / "VolII-NoW-manifest.md"
+        manifest_path.rename(candidate_a)
+        candidate_b.write_text(_make_manifest_content(), encoding="utf-8")
+
+        run_seal(_seal_args(full_sha))
+
+        for candidate in (candidate_a, candidate_b):
+            fm = extract_frontmatter(candidate.read_text(encoding="utf-8"))
+            assert fm.get("commit-sha") in (None, ""), (
+                f"{candidate} got backfilled despite an unresolved naming "
+                "ambiguity. Seal guessed. Seal should never guess."
+            )
+
+        err = capsys.readouterr().err
+        assert "VolII-Archive-A" in err and "VolII-Archive-B" in err, (
+            "Expected both ambiguous candidates listed in the warning so the "
+            "operator can resolve it by hand instead of Archivist picking one "
+            "for them."
+        )
+
+    def test_manifest_genuinely_deleted_warns_without_crash(
+        self, git_repo, monkeypatch, capsys
+    ):
+        """
+        No file at the committed path, no match anywhere else in the repo —
+        that's an actual deletion, not a reorg. Seal must say so plainly and
+        move on. Not crash, and not pretend it's fine.
+        """
+        monkeypatch.chdir(git_repo.path)
+        manifest_path = git_repo.path / "Editions" / "VolIII-NoQ-manifest.md"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(_make_manifest_content(), encoding="utf-8")
+
+        full_sha, _ = _commit_manifest_and_get_shas(git_repo, manifest_path)
+        manifest_path.unlink()
+
+        # Must not raise
+        run_seal(_seal_args(full_sha))
+
+        err = capsys.readouterr().err
+        assert "deletion" in err.lower(), (
+            "Expected a warning distinguishing a true deletion from a reorg. "
+            "Silent skips for genuinely missing files are how debugging "
+            "becomes archaeology."
+        )
+
+    def test_manifest_patched_count_reported_in_output(
+        self, git_repo, monkeypatch, capsys
+    ):
+        monkeypatch.chdir(git_repo.path)
+        manifest_path = git_repo.path / "Editions" / "VolIV-NoP-manifest.md"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(_make_manifest_content(), encoding="utf-8")
+
+        full_sha, _ = _commit_manifest_and_get_shas(git_repo, manifest_path)
+        run_seal(_seal_args(full_sha))
+
+        out = capsys.readouterr().out
+        assert "1" in out and "backfilled" in out.lower(), (
+            "Expected the manifest summary line reporting 1 manifest backfilled. "
+            "Either manifest_patched_count isn't incrementing or the summary "
+            "line isn't printing."
         )

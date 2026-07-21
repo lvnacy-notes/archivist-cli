@@ -11,6 +11,7 @@ from archivist.utils.config import (
     get_module_type,
     read_archivist_config,
 )
+from archivist.utils.git import GitChanges
 from archivist.utils.output import (
     error,
     progress,
@@ -18,7 +19,6 @@ from archivist.utils.output import (
     warning
 )
 from archivist.utils.rename_helpers import (
-    GitChanges,
     is_cross_dir_move,
     rename_display_path,
     rename_suspicion,
@@ -59,7 +59,17 @@ def extract_descriptions(existing_content: str) -> dict[str, str | list[str]]:
     lines = existing_content.splitlines()
 
     for i, line in enumerate(lines):
-        m = re.match(r"^- `([^`]+)`:([ \t]*)(.*)$", line)
+        # The [^`]*? gap between the filepath backtick and the colon exists
+        # because format_file_list() jams a rename/move annotation in there
+        # for renamed files — " *(renamed from `old.md`)*" or
+        # " *(moved from `old.md`)*", possibly with a " ⚠️ ..." suspicion
+        # flag riding shotgun. None of that garbage contains a colon, so a
+        # non-greedy match up to the FIRST colon still lands on the real
+        # separator instead of choking on the annotation and skipping the
+        # line outright — which is exactly what happened before this fix,
+        # and exactly why renamed-and-modified files silently lost their
+        # descriptions on every rerun while plain new files didn't.
+        m = re.match(r"^- `([^`]+)`.*?:([ \t]*)(.*)$", line)
         if not m:
             continue
 

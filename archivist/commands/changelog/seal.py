@@ -50,11 +50,34 @@ _LOOKS_LIKE_A_SHA = re.compile(r"^[0-9a-f]{7,}$")
 
 
 def _get_committed_files(commit_sha: str, git_root: Path) -> list[str]:
-    """Return all files touched by the given commit."""
+    """
+    Return all files touched by the given commit.
+
+    -M is load-bearing here, not decoration. The hook fires on every commit,
+    not just the ones you intend to seal — including the follow-up commit
+    that sweeps up a previous seal run's rename (per the documented workflow,
+    that rename is left unstaged and gets committed standalone or bundled
+    with whatever comes next). Without -M, git reports that follow-up commit
+    as a plain delete of the old unsealed name + add of the new sealed name,
+    and the stale old filename leaks back into changelog_candidates for a
+    commit that has nothing to do with that file's actual sealing. With -M,
+    git correctly reports it as a rename and the stale name never surfaces
+    as a candidate at all. Same convention as get_git_changes() in git.py —
+    don't diverge from it here.
+    """
     try:
         output = subprocess.check_output(
-            ["git", "-c", "core.quotepath=false",
-             "diff-tree", "--no-commit-id", "-r", "--name-only", commit_sha],
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "diff-tree",
+                "--no-commit-id",
+                "-r",
+                "-M",
+                "--name-only",
+                commit_sha
+            ],
             stderr=subprocess.PIPE, text=True, cwd=git_root,
         )
         return output.strip().splitlines()
@@ -143,10 +166,33 @@ def run(args: argparse.Namespace) -> None:
         filename = Path(filepath).name
 
         if not full_path.exists():
+            # This filename is the *unsealed* form. The hook fires on every
+            # commit, not just the ones where something actually needs
+            # sealing — including the follow-up commit that sweeps up a
+            # previous seal run's rename (that rename is intentionally left
+            # unstaged; see module docstring). -M above should keep that
+            # follow-up commit's diff-tree output clean of this stale name
+            # entirely, but don't make this branch depend on -M working
+            # perfectly in every git version or every edge case (e.g. someone
+            # runs this command by hand on an old commit). Glob for any
+            # already-sealed sibling — don't guess one exact filename by
+            # gluing today's short_sha onto the stem, since that's exactly
+            # what produced the false "deleted" warning in the first place.
+            sealed_sibling_re = re.compile(
+                rf"^{re.escape(full_path.stem)}-[0-9a-f]{{7,}}\.md$"
+            )
+            sealed_siblings = [
+                p for p in full_path.parent.glob(f"{full_path.stem}-*.md")
+                if sealed_sibling_re.match(p.name)
+            ]
+            if sealed_siblings:
+                skipped_count += 1
+                continue
+
             warning(
-                f"{filename} was in the commit but isn't on disk. "
-                f"Already renamed by a previous seal run, or you've been "
-                f"fucking with files manually. Skipping."
+                f"{ filename } was committed, isn't on disk, and there's no "
+                f"sealed version either. Something actually deleted this. "
+                f"Go find out what — I'm not psychic. Skipping."
             )
             continue
 
@@ -199,11 +245,36 @@ def run(args: argparse.Namespace) -> None:
         filename = Path(filepath).name
 
         if not full_path.exists():
-            warning(
-                f"{filename} was in the commit but isn't on disk. "
-                f"Did you delete it manually? Bold move. Skipping."
-            )
-            continue
+            # Manifests don't get renamed by us — if it's not where the
+            # commit says, it most likely just moved, because reorganizing
+            # the vault is a normal thing people do. Search by filename
+            # before assuming anything's actually gone.
+            relocated = [
+                p for p in git_root.rglob(filename)
+                if p.is_file() and ".git" not in p.relative_to(git_root).parts
+            ]
+
+            if len(relocated) == 1:
+                full_path = relocated[0]
+                progress(
+                    f"  📦 {filename} moved since the commit — found it at "
+                    f"{full_path.relative_to(git_root)}. Backfilling there."
+                )
+            elif len(relocated) > 1:
+                warning(
+                    f"{filename} isn't where the commit says, and there's "
+                    f"more than one file with that name now. Not guessing "
+                    f"which one is yours: "
+                    f"{', '.join(str(p.relative_to(git_root)) for p in relocated)}"
+                )
+                continue
+            else:
+                warning(
+                    f"{filename} was in the commit and isn't anywhere in "
+                    f"the repo now. That's an actual deletion, not a "
+                    f"reorg. Skipping."
+                )
+                continue
 
         content = full_path.read_text(encoding="utf-8")
 

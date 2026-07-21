@@ -7,7 +7,10 @@ No git, no disk, no bullshit. Pure function calls with crafted inputs.
 If one of these fails, the rename logic is broken and you should feel bad.
 """
 
+import logging
+
 from archivist.utils import (
+    GitChanges,
     detect_dir_renames,
     infer_undetected_renames,
     process_renames_from_changes,
@@ -22,7 +25,13 @@ from archivist.utils import (
 # {"M": [], "A": [], "D": [], "R": []} forty-seven times.
 # ---------------------------------------------------------------------------
 
-def _changes(*, A=None, M=None, D=None, R=None):
+def _changes(
+    *,
+    A: list[str] | None = None,
+    M: list[str] | None = None,
+    D: list[str] | None = None,
+    R: list[tuple[str, str]] | None = None,
+) -> GitChanges:
     return {
         "A": list(A or []),
         "M": list(M or []),
@@ -164,21 +173,21 @@ class TestInferUndetectedRenames:
 
     def test_no_unpaired_files_returns_empty(self):
         # Everything already has a rename pair
-        changes = _changes(R=[("old/file.md", "new/file.md")])
+        changes = _changes(R = [("old/file.md", "new/file.md")])
         assert infer_undetected_renames(changes) == []
 
     def test_infers_simple_move(self):
         changes = _changes(
-            D=["old-dir/note.md"],
-            A=["new-dir/note.md"],
+            D = ["old-dir/note.md"],
+            A = ["new-dir/note.md"],
         )
         result = infer_undetected_renames(changes)
         assert result == [("old-dir/note.md", "new-dir/note.md")]
 
     def test_different_filenames_not_paired(self):
         changes = _changes(
-            D=["old/note-a.md"],
-            A=["new/note-b.md"],
+            D = ["old/note-a.md"],
+            A = ["new/note-b.md"],
         )
         assert infer_undetected_renames(changes) == []
 
@@ -186,17 +195,17 @@ class TestInferUndetectedRenames:
         # Same filename added in TWO places — we have no fucking clue which
         # one is the rename, so we leave both alone
         changes = _changes(
-            D=["old/note.md"],
-            A=["new-a/note.md", "new-b/note.md"],
+            D = ["old/note.md"],
+            A = ["new-a/note.md", "new-b/note.md"],
         )
         assert infer_undetected_renames(changes) == []
 
     def test_already_r_paired_deleted_side_excluded(self):
         # old/note.md is already in R — should not also show up as inferred
         changes = _changes(
-            D=["old/note.md"],
-            A=["new/note.md"],
-            R=[("old/note.md", "elsewhere/note.md")],
+            D = ["old/note.md"],
+            A = ["new/note.md"],
+            R = [("old/note.md", "elsewhere/note.md")],
         )
         result = infer_undetected_renames(changes)
         assert result == []
@@ -204,17 +213,17 @@ class TestInferUndetectedRenames:
     def test_already_r_added_side_excluded(self):
         # new/note.md is already the destination of a known rename
         changes = _changes(
-            D=["old/note.md"],
-            A=["new/note.md"],
-            R=[("somewhere/note.md", "new/note.md")],
+            D = ["old/note.md"],
+            A = ["new/note.md"],
+            R = [("somewhere/note.md", "new/note.md")],
         )
         result = infer_undetected_renames(changes)
         assert result == []
 
     def test_infers_multiple_independent_moves(self):
         changes = _changes(
-            D=["old/alpha.md", "old/beta.md"],
-            A=["new/alpha.md", "new/beta.md"],
+            D = ["old/alpha.md", "old/beta.md"],
+            A = ["new/alpha.md", "new/beta.md"],
         )
         result = infer_undetected_renames(changes)
         assert sorted(result) == sorted([
@@ -224,8 +233,8 @@ class TestInferUndetectedRenames:
 
     def test_true_deletion_untouched_when_no_matching_add(self):
         changes = _changes(
-            D=["old/note.md", "permanently-gone.md"],
-            A=["new/note.md"],
+            D = ["old/note.md", "permanently-gone.md"],
+            A = ["new/note.md"],
         )
         result = infer_undetected_renames(changes)
         # permanently-gone.md has no match in A — stays out of result
@@ -240,6 +249,10 @@ class TestReassignDeletions:
     """
     reassign_deletions() separates true deletions from files that only
     *look* deleted because their parent directory got renamed.
+
+    A synthesized target only counts if it's a real staged addition — pass
+    it via `added`. Get this wrong (or forget it) and everything falls
+    through to true_deleted, which is the safe direction to fail in.
 
     Returns (true_deleted, dir_renamed_files).
     """
@@ -258,28 +271,48 @@ class TestReassignDeletions:
     def test_dir_renamed_file_is_reassigned(self):
         deleted = ["old-dir/file.md"]
         dir_renames = {"old-dir": "new-dir"}
-        true_del, dir_renamed = reassign_deletions(deleted, dir_renames)
+        true_del, dir_renamed = reassign_deletions(
+            deleted,
+            dir_renames,
+            added = ["new-dir/file.md"]
+        )
         assert true_del == []
         assert dir_renamed == [("old-dir/file.md", "new-dir/file.md")]
 
     def test_mixed_true_deletions_and_dir_renamed(self):
         deleted = ["old-dir/moved.md", "genuinely-deleted.md"]
         dir_renames = {"old-dir": "new-dir"}
-        true_del, dir_renamed = reassign_deletions(deleted, dir_renames)
+        true_del, dir_renamed = reassign_deletions(
+            deleted,
+            dir_renames,
+            added = ["new-dir/moved.md"]
+        )
         assert true_del == ["genuinely-deleted.md"]
         assert dir_renamed == [("old-dir/moved.md", "new-dir/moved.md")]
 
     def test_nested_dir_rename_path_reconstructed_correctly(self):
         deleted = ["EDITIONS/042/draft.md"]
         dir_renames = {"EDITIONS/042": "ARCHIVE/EDITIONS/042"}
-        true_del, dir_renamed = reassign_deletions(deleted, dir_renames)
+        true_del, dir_renamed = reassign_deletions(
+            deleted,
+            dir_renames,
+            added = ["ARCHIVE/EDITIONS/042/draft.md"]
+        )
         assert true_del == []
         assert dir_renamed == [("EDITIONS/042/draft.md", "ARCHIVE/EDITIONS/042/draft.md")]
 
     def test_multiple_files_under_same_renamed_dir(self):
-        deleted = ["old/a.md", "old/b.md", "old/c.md"]
+        deleted = [
+            "old/a.md",
+            "old/b.md",
+            "old/c.md"
+        ]
         dir_renames = {"old": "new"}
-        true_del, dir_renamed = reassign_deletions(deleted, dir_renames)
+        true_del, dir_renamed = reassign_deletions(
+            deleted,
+            dir_renames,
+            added = ["new/a.md", "new/b.md", "new/c.md"]
+        )
         assert true_del == []
         assert sorted(dir_renamed) == sorted([
             ("old/a.md", "new/a.md"),
@@ -292,8 +325,63 @@ class TestReassignDeletions:
         # "old-stuff", NOT "old" — should NOT be reassigned
         deleted = ["old-stuff/file.md"]
         dir_renames = {"old": "new"}
-        true_del, dir_renamed = reassign_deletions(deleted, dir_renames)
+        true_del, dir_renamed = reassign_deletions(
+            deleted,
+            dir_renames,
+            added = ["new/file.md"]
+        )
         assert true_del == ["old-stuff/file.md"]
+        assert dir_renamed == []
+
+    # -----------------------------------------------------------------
+    # Fabrication guard — the actual bug this parameter exists to fix
+    # -----------------------------------------------------------------
+    #
+    # reassign_deletions() used to synthesize a rename target by string-
+    # joining the inferred directory with the deleted file's own basename,
+    # and assert it as fact — with zero check that anything by that name
+    # was ever actually staged. `added` exists specifically to stop that:
+    # a guessed path that isn't a real addition has to fall back to a true
+    # deletion, not a fabricated move.
+
+    def test_synthesized_target_not_staged_falls_back_to_true_deletion(self):
+        deleted = ["old-dir/file.md"]
+        dir_renames = {"old-dir": "new-dir"}
+        true_del, dir_renamed = reassign_deletions(deleted, dir_renames, added=[])
+        assert true_del == ["old-dir/file.md"]
+        assert dir_renamed == []
+
+    def test_synthesized_target_not_staged_emits_warning(self, caplog):
+        deleted = ["old-dir/file.md"]
+        dir_renames = {"old-dir": "new-dir"}
+        with caplog.at_level(logging.WARNING, logger="archivist"):
+            reassign_deletions(deleted, dir_renames, added=[])
+        assert "old-dir/file.md" in caplog.text
+        assert "new-dir/file.md" in caplog.text
+
+    def test_some_targets_staged_others_not_splits_correctly(self):
+        # Two files under the same renamed directory — one's target is
+        # actually staged, the other's isn't. They should NOT be treated
+        # as a package deal; each stands on its own evidence.
+        deleted = ["old/real.md", "old/phantom.md"]
+        dir_renames = {"old": "new"}
+        true_del, dir_renamed = reassign_deletions(
+            deleted, dir_renames, added=["new/real.md"]
+        )
+        assert true_del == ["old/phantom.md"]
+        assert dir_renamed == [("old/real.md", "new/real.md")]
+
+    def test_default_added_is_empty_so_nothing_is_reassigned_by_default(self):
+        """
+        added defaults to an empty tuple. Forget to pass it and every
+        directory-rename inference fails its verification and falls through
+        to true_deleted. Deliberate: failing toward "just call it a
+        deletion" beats failing toward "invent a path nobody staged."
+        """
+        deleted = ["old-dir/file.md"]
+        dir_renames = { "old-dir": "new-dir" }
+        true_del, dir_renamed = reassign_deletions(deleted, dir_renames)
+        assert true_del == ["old-dir/file.md"]
         assert dir_renamed == []
 
 
@@ -315,7 +403,7 @@ class TestProcessRenamesFromChanges:
 
     def test_single_rename_inverted(self):
         changes = _changes(R=[("old/file.md", "new/file.md")])
-        assert process_renames_from_changes(changes) == {"new/file.md": "old/file.md"}
+        assert process_renames_from_changes(changes) == { "new/file.md": "old/file.md" }
 
     def test_multiple_renames_all_inverted(self):
         changes = _changes(R=[
@@ -330,10 +418,10 @@ class TestProcessRenamesFromChanges:
 
     def test_other_change_types_are_ignored(self):
         changes = _changes(
-            M=["modified.md"],
-            A=["added.md"],
-            D=["deleted.md"],
-            R=[("old/note.md", "new/note.md")],
+            M = ["modified.md"],
+            A = ["added.md"],
+            D = ["deleted.md"],
+            R = [("old/note.md", "new/note.md")],
         )
         result = process_renames_from_changes(changes)
         assert result == {"new/note.md": "old/note.md"}
@@ -460,7 +548,7 @@ class TestDeepPathChains:
         new_parent = f"{self._DEEP_PREFIX}/new-subdir"
         deleted = [self._DEEP_OLD]
         dir_renames = {old_parent: new_parent}
-        true_del, dir_renamed = reassign_deletions(deleted, dir_renames)
+        true_del, dir_renamed = reassign_deletions(deleted, dir_renames, added=[self._DEEP_NEW])
         assert true_del == []
         assert dir_renamed == [(self._DEEP_OLD, self._DEEP_NEW)]
 
@@ -494,20 +582,24 @@ class TestRenameProcessingPipeline:
         the rest from the D/A pairs.
         """
         raw_changes = _changes(
-            D=["drafts/chapter-02.md"],
-            A=["published/chapter-02.md"],
-            R=[("drafts/chapter-01.md", "published/chapter-01.md")],
+            D = ["drafts/chapter-02.md"],
+            A = ["published/chapter-02.md"],
+            R = [("drafts/chapter-01.md", "published/chapter-01.md")],
         )
 
         dir_renames = detect_dir_renames(raw_changes["R"])
         assert dir_renames == {"drafts": "published"}
 
-        true_deleted, dir_renamed = reassign_deletions(raw_changes["D"], dir_renames)
+        true_deleted, dir_renamed = reassign_deletions(
+            raw_changes["D"],
+            dir_renames,
+            added = raw_changes["A"]
+        )
         assert true_deleted == []
         assert ("drafts/chapter-02.md", "published/chapter-02.md") in dir_renamed
 
         all_renames = raw_changes["R"] + dir_renamed
-        lookup = process_renames_from_changes({"R": all_renames})
+        lookup = process_renames_from_changes(_changes(R=all_renames))
 
         assert lookup["published/chapter-01.md"] == "drafts/chapter-01.md"
         assert lookup["published/chapter-02.md"] == "drafts/chapter-02.md"
@@ -528,7 +620,7 @@ class TestRenameProcessingPipeline:
         assert inferred == [("old/lonely.md", "new/lonely.md")]
 
         all_renames = raw_changes["R"] + inferred
-        lookup = process_renames_from_changes({"R": all_renames})
+        lookup = process_renames_from_changes(_changes(R=all_renames))
 
         assert lookup["confirmed/to.md"] == "confirmed/from.md"
         assert lookup["new/lonely.md"] == "old/lonely.md"
@@ -547,7 +639,11 @@ class TestRenameProcessingPipeline:
         )
 
         dir_renames = detect_dir_renames(raw_changes["R"])
-        true_deleted, dir_renamed = reassign_deletions(raw_changes["D"], dir_renames)
+        true_deleted, dir_renamed = reassign_deletions(
+            raw_changes["D"],
+            dir_renames,
+            added = raw_changes["A"]
+        )
 
         assert "nuclear-option.md" in true_deleted
         assert dir_renamed == []
