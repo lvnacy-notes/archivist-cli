@@ -148,6 +148,68 @@ class TestExtractDescriptions:
         result = extract_descriptions(content)
         assert result["file.md"] == "updated URL: https://example.com"
 
+    def test_description_preserved_when_line_has_rename_annotation(self):
+        """
+        Regression test. format_file_list() jams a rename annotation
+        (" *(renamed from `old.md`)*") between the filepath's closing
+        backtick and the separator colon for any file that shows up in
+        active_renames. The old regex assumed the colon sat immediately
+        after the backtick, so this shape failed to match at all and the
+        description got silently dropped on every rerun. Same-directory
+        rename flavor.
+        """
+        content = "- `notes/new-name.md` *(renamed from `notes/old-name.md`)*: fixed the typo\n"
+        result = extract_descriptions(content)
+        assert result == {"notes/new-name.md": "fixed the typo"}
+
+    def test_description_preserved_when_line_has_moved_from_annotation(self):
+        """Same bug, cross-directory flavor — 'moved from' instead of 'renamed from'."""
+        content = "- `published/chapter.md` *(moved from `drafts/chapter.md`)*: polished the ending\n"
+        result = extract_descriptions(content)
+        assert result == {"published/chapter.md": "polished the ending"}
+
+    def test_description_preserved_when_rename_annotation_has_suspicion_warning(self):
+        """
+        Belt and suspenders: a suspicious rename tacks the ⚠️ warning onto the
+        annotation, making it even longer. Still no colon in there. Still has
+        to match, or the user's description dies right alongside the trust
+        they had in this changelog.
+        """
+        content = (
+            "- `new/zeta.md` *(moved from `old/alpha.md`)* "
+            "⚠️ *rename unverified (cross-directory, name mismatch) — double-check*: "
+            "renamed this on purpose, don't worry about it\n"
+        )
+        result = extract_descriptions(content)
+        assert result == {"new/zeta.md": "renamed this on purpose, don't worry about it"}
+
+    def test_sub_bullet_entry_with_rename_annotation_still_parsed(self):
+        """Sub-bullet form needs the same tolerance — the trailing bare colon still has to match."""
+        content = (
+            "- `notes/new-name.md` *(renamed from `notes/old-name.md`)*:\n"
+            "  - did one thing\n"
+            "  - did another thing\n"
+        )
+        result = extract_descriptions(content)
+        assert result == {"notes/new-name.md": ["did one thing", "did another thing"]}
+
+    def test_round_trips_through_format_file_list_with_rename(self):
+        """
+        The actual bug, end to end: render a renamed-and-modified file through
+        format_file_list(), then feed that output straight back into
+        extract_descriptions(). If the description doesn't survive the round
+        trip, nothing downstream matters — this is the exact rerun sequence
+        that was eating people's descriptions.
+        """
+        rendered = format_file_list(
+            ["notes/new-name.md"],
+            "fallback",
+            {"notes/new-name.md": "fixed the typo"},
+            active_renames={"notes/new-name.md": "notes/old-name.md"},
+        )
+        result = extract_descriptions(rendered)
+        assert result == {"notes/new-name.md": "fixed the typo"}
+
 
 # ===========================================================================
 # extract_user_content
@@ -187,6 +249,7 @@ class TestExtractUserContent:
         """
         content = f"generated\n{ARCHIVIST_AUTO_END}\nuser stuff\n{ARCHIVIST_AUTO_END}\nmore user stuff\n"
         result = extract_user_content(content)
+        assert result is not None  # narrows str | None before we go poking at it below
         assert ARCHIVIST_AUTO_END in result
         assert result.startswith("\nuser stuff")
 
@@ -238,14 +301,14 @@ class TestFormatFileList:
         assert "[description]" in result
 
     def test_single_file_with_string_description_renders_inline(self):
-        descriptions = {"notes/file.md": "the user wrote this"}
+        descriptions: dict[str, str | list[str]] = {"notes/file.md": "the user wrote this"}
         result = format_file_list(["notes/file.md"], "fallback", descriptions)
         assert "- `notes/file.md`" in result
         assert "the user wrote this" in result
         assert "[description]" not in result
 
     def test_single_file_with_list_description_renders_sub_bullets(self):
-        descriptions = {"notes/file.md": ["did this", "also did that"]}
+        descriptions: dict[str, str | list[str]] = {"notes/file.md": ["did this", "also did that"]}
         result = format_file_list(["notes/file.md"], "fallback", descriptions)
         assert "- `notes/file.md`:" in result
         assert "  - did this" in result
@@ -307,7 +370,7 @@ class TestFormatFileList:
 
     def test_multiple_files_all_rendered(self):
         files = ["a.md", "b.md", "c.md"]
-        descriptions = {"a.md": "desc a", "b.md": "desc b", "c.md": "desc c"}
+        descriptions: dict[str, str | list[str]] = {"a.md": "desc a", "b.md": "desc b", "c.md": "desc c"}
         result = format_file_list(files, "fallback", descriptions)
         assert "- `a.md`" in result
         assert "- `b.md`" in result
@@ -318,7 +381,7 @@ class TestFormatFileList:
 
     def test_mixed_descriptions_some_filled_some_placeholder(self):
         files = ["filled.md", "empty.md"]
-        descriptions = {"filled.md": "this one has content"}
+        descriptions: dict[str, str | list[str]] = {"filled.md": "this one has content"}
         result = format_file_list(files, "fallback", descriptions)
         assert "this one has content" in result
         assert "[description]" in result
@@ -342,7 +405,7 @@ class TestFormatFileList:
         Sub-bullet blocks need a trailing blank line so the next entry
         doesn't smash into them in the rendered markdown.
         """
-        descriptions = {"file.md": ["bullet one", "bullet two"]}
+        descriptions: dict[str, str | list[str]] = {"file.md": ["bullet one", "bullet two"]}
         result = format_file_list(["file.md"], "fallback", descriptions)
         lines = result.splitlines()
         # Find the last sub-bullet line and check there's a blank line after it

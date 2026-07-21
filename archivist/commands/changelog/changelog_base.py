@@ -49,7 +49,6 @@ from archivist.utils import (
     GitChanges,
     detect_dir_renames,
     ensure_staged,
-    error,
     extract_changelog_title,
     extract_descriptions,
     extract_frontmatter,
@@ -72,7 +71,6 @@ from archivist.utils import (
     reassign_deletions,
     report_changes,
     spinner,
-    success,
     warning,
     write_changelog,
 )
@@ -238,7 +236,7 @@ def run_changelog(
     #           file content against HEAD for any remaining unmatched D/A pairs.
 
     dir_renames = detect_dir_renames(changes["R"])
-    true_deleted, dir_renamed_files = reassign_deletions(changes["D"], dir_renames)
+    true_deleted, dir_renamed_files = reassign_deletions(changes["D"], dir_renames, changes["A"])
     all_renames: list[tuple[str, str]] = changes["R"] + dir_renamed_files
 
     # Pass 1: same filename, different directory

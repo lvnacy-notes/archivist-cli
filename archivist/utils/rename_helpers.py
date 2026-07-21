@@ -8,6 +8,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 from archivist.utils.git import GitChanges
+from archivist.utils.output import warning
 
 
 # ---------------------------------------------------------------------------
@@ -186,21 +187,54 @@ def process_renames_from_changes(changes: GitChanges) -> dict[str, str]:
 def reassign_deletions(
     deleted: list[str],
     dir_renames: dict[str, str],
+    added: Sequence[str] = (),
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """
     Separate true deletions from files that appear deleted only because
     their parent directory was renamed.
 
+    A directory-rename inference is only trustworthy if the path it predicts
+    actually exists somewhere in this diff's staged additions. Without that
+    check this function used to synthesize a plausible-looking path — swap
+    in the inferred target directory, keep the same basename — and assert it
+    as a rename destination even when nothing was ever staged there. That's
+    not inference, that's fabrication, and it produces changelog entries
+    pointing at files that don't exist anywhere in the commit. `added` is the
+    guard against that: pass it `changes["A"]` (or equivalent) so a
+    synthesized target has to actually be a real staged file before we'll
+    believe it.
+
+    Args:
+        deleted:     Files git reported as plain deletions this run.
+        dir_renames: {old_dir_prefix: new_dir_prefix} from detect_dir_renames().
+        added:       Files git reported as staged additions this run. Used
+                     solely to verify a synthesized rename target is real.
+                     Defaults to empty, which — correctly — means nothing
+                     gets reassigned; pass the actual added list.
+
     Returns (true_deleted, dir_renamed_files) where dir_renamed_files is
     a list of (old, new) path tuples ready to be merged into changes["R"].
+    A file whose synthesized target isn't a genuine added path falls through
+    to true_deleted instead, with a loud warning — silently miscategorizing
+    a deletion as an unverified rename is worse than just calling it a
+    deletion and letting a human notice something's missing.
     """
+    added_set = set(added)
     true_deleted: list[str] = []
     dir_renamed_files: list[tuple[str, str]] = []
     for f in deleted:
         parent = str(Path(f).parent)
         if parent in dir_renames:
             new_path = str(Path(dir_renames[parent]) / Path(f).name)
-            dir_renamed_files.append((f, new_path))
+            if new_path in added_set:
+                dir_renamed_files.append((f, new_path))
+            else:
+                warning(
+                    f"Inferred '{dir_renames[parent]}' as the target of a directory "
+                    f"rename for '{f}', but '{new_path}' was never staged. "
+                    f"Treating it as a true deletion instead of guessing."
+                )
+                true_deleted.append(f)
         else:
             true_deleted.append(f)
     return true_deleted, dir_renamed_files
