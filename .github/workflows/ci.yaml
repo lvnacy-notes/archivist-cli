@@ -13,6 +13,11 @@
 # fail fast because there's no point running integration if your pure functions
 # are already on fire. Integration tests run even if a sibling matrix job fails
 # (fail-fast: false) so you get the full picture of what's broken across versions.
+#
+# Python 3.12+ only. We use PEP 701's relaxed f-string grammar (spaces around
+# conversions/braces, nested quotes, all of it) freely throughout the codebase,
+# and 3.10/3.11 will throw a SyntaxError and die about it. Not our problem
+# anymore — upgrade your fucking interpreter.
 
 name: Run the Damn Tests
 
@@ -36,7 +41,7 @@ jobs:
     strategy:
       fail-fast: true   # unit failures are a hard stop; don't waste CI minutes
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.12", "3.13"]
 
     steps:
       - name: Checkout the goods
@@ -68,7 +73,7 @@ jobs:
     strategy:
       fail-fast: false   # see every broken Python version, not just the first
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.12", "3.13"]
 
     steps:
       - name: Checkout the goods

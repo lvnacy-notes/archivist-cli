@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "archivist"
 version = "3.0.0"
 description = "CLI tool for managing Obsidian vault frontmatter and archive workflows"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "argcomplete",
     "pathspec",

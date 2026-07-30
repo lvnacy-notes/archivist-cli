@@ -16,7 +16,7 @@
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](https://opensource.org/licenses/MIT)
-[![Python](https://img.shields.io/badge/Python-3.10+-red.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12+-red.svg)](https://www.python.org/)
 
 </div>
 <div align="center">
@@ -190,7 +190,7 @@ Archivist is designed to live in a permanent location outside any vault and be i
 curl -fsSL https://raw.githubusercontent.com/lvnacy-notes/archivist-cli/main/install.sh | bash
 ```
 
-The script checks for Python 3.10+ and git, clones the repo to `~/tools/archivist-cli`, installs the package, and runs `archivist hooks install` automatically. The manual steps below are available if you prefer to inspect and run each step yourself:
+The script checks for Python 3.12+ and git, clones the repo to `~/tools/archivist-cli`, installs the package, and runs `archivist hooks install` automatically. The manual steps below are available if you prefer to inspect and run each step yourself:
 
 ```bash
 # Clone somewhere permanent
@@ -204,7 +204,7 @@ $(pyenv which pip) install -e .
 
 The `-e` flag installs in editable mode — edits to source files take effect immediately without reinstalling.
 
-**Requirements:** Python 3.10+, `git` in your `$PATH`. Windows folks: the interactive Apparatus checkbox menu (`init`, `add`, `sync`'s handoffs) uses stdlib `curses`, which Windows doesn't ship — run `pip install windows-curses` or you'll get bumped to a plainer numbered-prompt fallback automatically. Either way it works; one's just prettier.
+**Requirements:** Python 3.12+, `git` in your `$PATH`. We use PEP 701's relaxed f-string grammar throughout, so 3.10 and 3.11 are dead to us — don't bother trying, it won't import. Windows folks: the interactive Apparatus checkbox menu (`init`, `add`, `sync`'s handoffs) uses stdlib `curses`, which Windows doesn't ship — run `pip install windows-curses` or you'll get bumped to a plainer numbered-prompt fallback automatically. Either way it works; one's just prettier.
 
 **Dependencies:** `argcomplete`, `pathspec`, and `pyyaml`, installed automatically. The frontmatter commands are stdlib only; `pyyaml` is required by `manifest` and `changelog`; `pathspec` is required by `init`, `add`, `sync`, and `migrate`. The Apparatus registry itself is pure `sqlite3` — stdlib, no new dependency.
 

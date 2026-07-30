@@ -49,7 +49,7 @@ from typing import TypedDict, cast
 try:
     import curses
 except ImportError:  # pragma: no cover — Windows without windows-curses installed
-    curses = None  # type: ignore[assignment]
+    curses = None
 
 from archivist.utils.config import (
     APPARATUS_MODULE_TYPES,
