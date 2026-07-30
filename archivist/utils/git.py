@@ -61,14 +61,22 @@ def ensure_staged(git_root: Path) -> None:
     """
     try:
         result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
-            capture_output=True, text=True, check=True, cwd=git_root,
+            [
+                "git",
+                "diff",
+                "--cached",
+                "--name-only"
+            ],
+            capture_output = True,
+            text = True,
+            check = True,
+            cwd = git_root,
         )
         if not result.stdout.strip():
             error("What the fuck am I supposed to log? Stage some files first.")
             sys.exit(1)
         staged_files = result.stdout.strip().splitlines()
-        progress(f"  ✔  Staging check passed — {len(staged_files)} file(s) staged")
+        progress(f"  ✔  Staging check passed — { len(staged_files) } file(s) staged")
 
     except subprocess.CalledProcessError as e:
         ledger.error(f"Git error while checking staged files: {e}")
@@ -91,8 +99,16 @@ def ensure_staged_under(path: Path, git_root: Path) -> None:
     """
     try:
         result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
-            capture_output=True, text=True, check=True, cwd=git_root,
+            [
+                "git",
+                "diff",
+                "--cached",
+                "--name-only"
+            ],
+            capture_output = True,
+            text = True,
+            check = True,
+            cwd = git_root,
         )
         all_staged = result.stdout.strip().splitlines()
 
@@ -105,19 +121,23 @@ def ensure_staged_under(path: Path, git_root: Path) -> None:
 
         if not in_scope:
             error(
-                f"Nothing staged under '{scope_prefix}'. "
+                f"Nothing staged under '{ scope_prefix }'. "
                 f"Stage your edition files first."
             )
             sys.exit(1)
 
-        progress(f"  ✔  Staging check passed — {len(in_scope)} file(s) staged under '{scope_prefix}'")
+        progress(f"  ✔  Staging check passed — { len(in_scope) } file(s) staged under '{ scope_prefix }'")
 
     except subprocess.CalledProcessError as e:
         ledger.error(f"Git error while checking staged files: {e}")
         sys.exit(1)
 
 
-def get_file_from_git(filepath: str, git_root: Path, ref: str = "HEAD") -> str | None:
+def get_file_from_git(
+    filepath: str,
+    git_root: Path,
+    ref: str = "HEAD"
+) -> str | None:
     """
     Retrieve the content of a file from a specific git ref using `git show <ref>:<path>`.
     
@@ -132,7 +152,11 @@ def get_file_from_git(filepath: str, git_root: Path, ref: str = "HEAD") -> str |
     """
     try:
         raw = subprocess.check_output(
-            ["git", "show", f"{ref}:{filepath}"],
+            [
+                "git",
+                "show",
+                f"{ ref }:{ filepath }"
+            ],
             stderr = subprocess.PIPE,
             cwd = git_root,
         )
@@ -168,7 +192,7 @@ def get_git_changes(
             scope_path = path.relative_to(git_root)
         except ValueError:
             ledger.error(
-                f"Error: Path '{path}' is not inside the git repo at '{git_root}'."
+                f"Error: Path '{ path }' is not inside the git repo at '{ git_root }'."
             )
             sys.exit(1)
     
@@ -184,21 +208,37 @@ def get_git_changes(
     pathspec = (["--"] + all_paths) if all_paths else []
 
     if commit_sha:
-        cmd = ["git", "-c", "core.quotepath=false", "diff-tree",
-               "--name-status", "-M", "-r", commit_sha] + pathspec
+        cmd = [
+            "git",
+            "-c",
+            "core.quotepath=false",
+            "diff-tree",
+            "--name-status",
+            "-M",
+            "-r",
+            commit_sha
+        ] + pathspec
     else:
-        cmd = ["git", "-c", "core.quotepath=false", "diff-index",
-               "--cached", "--name-status", "-M", "HEAD"] + pathspec
+        cmd = [
+            "git",
+            "-c",
+            "core.quotepath=false",
+            "diff-index",
+            "--cached",
+            "--name-status",
+            "-M",
+            "HEAD"
+        ] + pathspec
 
     try:
         output = subprocess.check_output(
             cmd,
-            stderr=subprocess.PIPE,
-            text=True,
-            errors="replace"
+            stderr = subprocess.PIPE,
+            text = True,
+            errors = "replace"
         )
     except subprocess.CalledProcessError as e:
-        ledger.error(f"Error running git command: {e}")
+        ledger.error(f"Error running git command: { e }")
         sys.exit(1)
 
     modified: list[str] = []
@@ -221,7 +261,7 @@ def get_git_changes(
             case "D":
                 deleted.append(parts[-1].strip())
             case _:
-                ledger.warning(f"Unrecognized git status code in line: {line}")
+                ledger.warning(f"Unrecognized git status code in line: { line }")
 
     return GitChanges(
         M = modified,
@@ -242,10 +282,14 @@ def get_git_remotes(git_root: Path) -> dict[str, str]:
     """
     try:
         output = subprocess.check_output(
-            ["git", "remote", "-v"],
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=git_root,
+            [
+                "git",
+                "remote",
+                "-v"
+            ],
+            stderr = subprocess.PIPE,
+            text = True,
+            cwd = git_root,
         )
     except subprocess.CalledProcessError:
         return {}
@@ -287,6 +331,132 @@ def get_repo_root() -> Path:
         sys.exit(1)
 
 
+def get_superproject_root(repo_root: Path) -> Path | None:
+    """
+    Return the working-tree root of the superproject containing repo_root,
+    if repo_root is itself a git submodule. None if it isn't nested in
+    anything — a top-level vault, a standalone clone, whatever.
+
+    `git rev-parse --show-superproject-working-tree` is the one git command
+    that answers this directly, reading the gitlink metadata git already
+    maintains, instead of us reinventing the relationship by crawling parent
+    directories and hoping a `.git` file shows up where we expect one.
+    Empty output means "not a submodule of anything git knows about" — a
+    perfectly normal, non-error answer, not a failure worth logging.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "rev-parse",
+                "--show-superproject-working-tree"
+            ],
+            capture_output = True,
+            text = True,
+            cwd = repo_root,
+        )
+        output = result.stdout.strip()
+        return Path(output) if result.returncode == 0 and output else None
+    except OSError:
+        return None
+
+
+def _parse_submodule_status_paths(output: str) -> list[str]:
+    """
+    Parse `git submodule status` output into the list of submodule paths
+    (relative to the repo it was run against), ignoring SHA and any
+    parenthesized description git tacks on.
+
+    Format per line: [+- U]?<sha> <path> [(<description>)]. Shared by
+    get_submodule_status() and list_direct_submodules() — one regex, one
+    place, per CODE_CONVENTIONS' "import re is a flag" rule. Don't fork it
+    for a third caller; extend this instead.
+    """
+    paths: list[str] = []
+    for line in output.strip().splitlines():
+        if not line:
+            continue
+        match = re.match(
+            r"^[ +\-U]?([a-f0-9]+)\s+(.+?)(?:\s+\(.+\))?$",
+            line.strip()
+        )
+        if match:
+            paths.append(match.group(2).strip())
+    return paths
+
+
+def list_direct_submodules(git_root: Path) -> list[Path]:
+    """
+    Return the resolved, absolute paths of every direct (non-recursive),
+    checked-out submodule registered under git_root.
+
+    Deliberately lighter than get_submodule_status(): that function exists
+    to report health (dirty, unpushed, current SHA) for the vault changelog
+    and pays for three extra subprocess calls per submodule to get it.
+    Callers that just need "what's here" — sync's tree walk, for one —
+    shouldn't pay that price for data they're about to throw away.
+
+    If Git reports a submodule path that isn't actually checked out yet,
+    initialize the repo's submodule tree first so sync can descend into the
+    real repositories instead of tripping over a stub directory or an empty
+    checkout.
+    """
+    try:
+        output = subprocess.check_output(
+            [
+                "git",
+                "submodule",
+                "status"
+            ],
+            stderr = subprocess.PIPE,
+            text = True,
+            cwd = git_root,
+        )
+    except subprocess.CalledProcessError:
+        return []
+
+    if any(line.startswith(("-", "+", "U")) for line in output.splitlines()):
+        try:
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "update",
+                    "--init",
+                    "--recursive",
+                ],
+                cwd = git_root,
+                check = True,
+                capture_output = True,
+                text = True,
+            )
+        except subprocess.CalledProcessError:
+            pass
+
+        try:
+            output = subprocess.check_output(
+                [
+                    "git",
+                    "submodule",
+                    "status"
+                ],
+                stderr = subprocess.PIPE,
+                text = True,
+                cwd = git_root,
+            )
+        except subprocess.CalledProcessError:
+            return []
+
+    resolved: list[Path] = []
+    for rel_path in _parse_submodule_status_paths(output):
+        sub_dir = (git_root / rel_path).resolve()
+        if sub_dir.exists() and (sub_dir / ".git").exists():
+            resolved.append(sub_dir)
+    return resolved
+
+
 def get_submodule_status(git_root: Path) -> dict[str, SubmoduleInfo]:
     """
     Query the status of all registered submodules.
@@ -308,25 +478,18 @@ def get_submodule_status(git_root: Path) -> dict[str, SubmoduleInfo]:
     status: dict[str, SubmoduleInfo] = {}
     
     # Get all registered submodules
-    submodules: list[str] = []
     try:
         output = subprocess.check_output(
-            ["git", "submodule", "status"],
-            stderr=subprocess.PIPE, text=True, cwd=git_root,
+            [
+                "git",
+                "submodule",
+                "status"
+            ],
+            stderr = subprocess.PIPE,
+            text = True,
+            cwd = git_root,
         )
-        for line in output.strip().splitlines():
-            if not line:
-                continue
-            # Format: [+- U]?<sha> <path> [(<description>)]
-            # Match: optional status char, sha, one+ spaces, then everything up to
-            # either end-of-line or the description paren. Fuck around with spaces.
-            match = re.match(
-                r"^[ +\-U]?([a-f0-9]+)\s+(.+?)(?:\s+\(.+\))?$",
-                line.strip()
-            )
-            if match:
-                path = match.group(2).strip()
-                submodules.append(path)
+        submodules = _parse_submodule_status_paths(output)
     except subprocess.CalledProcessError:
         return {}
     
@@ -341,18 +504,38 @@ def get_submodule_status(git_root: Path) -> dict[str, SubmoduleInfo]:
         try:
             # Get current short SHA
             info["current_sha"] = subprocess.check_output(
-                ["git", "rev-parse", "--short", "HEAD"],
-                stderr=subprocess.PIPE, text=True, cwd=sub_path,
+                [
+                    "git",
+                    "rev-parse",
+                    "--short",
+                    "HEAD"
+                ],
+                stderr = subprocess.PIPE,
+                text = True,
+                cwd = sub_path,
             ).strip()
             # Check for uncommitted changes
             info["has_uncommitted"] = bool(subprocess.check_output(
-                ["git", "status", "--porcelain"],
-                stderr=subprocess.PIPE, text=True, cwd=sub_path,
+                [
+                    "git",
+                    "status",
+                    "--porcelain"
+                ],
+                stderr = subprocess.PIPE,
+                text = True,
+                cwd = sub_path,
             ).strip())
             # Check for unpushed commits
             info["has_unpushed"] = bool(subprocess.check_output(
-                ["git", "log", "@{u}..", "--oneline"],
-                stderr=subprocess.PIPE, text=True, cwd=sub_path,
+                [
+                    "git",
+                    "log",
+                    "@{u}..",
+                    "--oneline"
+                ],
+                stderr = subprocess.PIPE,
+                text = True,
+                cwd = sub_path,
             ).strip())
         except subprocess.CalledProcessError:
             pass  # submodule may not be initialized — leave defaults
@@ -367,13 +550,28 @@ def _get_out_of_scope_unstaged(scope_path: Path, git_root: Path) -> list[str]:
     """
     try:
         modified = subprocess.run(
-            ["git", "diff", "--name-only"],
-            capture_output=True, text=True, check=True, cwd=git_root,
+            [
+                "git",
+                "diff",
+                "--name-only"
+            ],
+            capture_output = True,
+            text = True,
+            check = True,
+            cwd = git_root,
         ).stdout.strip().splitlines()
 
         untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
-            capture_output=True, text=True, check=True, cwd=git_root,
+            [
+                "git",
+                "ls-files",
+                "--others",
+                "--exclude-standard"
+            ],
+            capture_output = True,
+            text = True,
+            check = True,
+            cwd = git_root,
         ).stdout.strip().splitlines()
 
         rel = scope_path.relative_to(git_root) if scope_path.is_absolute() else scope_path
@@ -399,11 +597,19 @@ def prompt_out_of_scope_changes(scope_path: Path, git_root: Path) -> None:
         return
 
     file_list = "\n".join(f"       {f}" for f in out_of_scope)
-    warning(f"There are unstaged changes outside the scope ({scope_path}):\n{file_list}")
+    warning(f"There are unstaged changes outside the scope ({ scope_path }):\n{ file_list }")
     answer = input("\n  Stage these too? [y/N] ").strip().lower()
     if answer == "y":
         for f in out_of_scope:
-            subprocess.run(["git", "add", f], check=True, cwd=git_root)
+            subprocess.run(
+                [
+                    "git",
+                    "add",
+                    f
+                ],
+                check = True,
+                cwd = git_root
+            )
         success("📥 Staged out-of-scope changes.")
     else:
         progress("Skipping out-of-scope changes.")

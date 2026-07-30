@@ -1,5 +1,11 @@
 # archivist project configuration
-apparatus: False
+uuid: 0d94ffdd-1302-4ec7-907d-82dd23515b13
 module-type: general
+apparati:
+  - lvnacy
 changelog-output-dir: docs/ARCHIVE/CHANGELOG
-templater: False
+templater: resolve
+ignores:
+  []
+git-remote: git@github.com:lvnacy-notes/archivist-cli.git
+git-remote-name: github

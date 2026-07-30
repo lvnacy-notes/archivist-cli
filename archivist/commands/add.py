@@ -19,22 +19,19 @@ from archivist.utils import (
     APPARATUS_MODULE_TYPES,
     ConfigSchema,
     ModuleRow,
-    add_module_to_apparatus,
-    add_module_to_bay,
     error,
-    get_module_by_path,
     get_module_by_uuid,
-    get_project_name,
     get_registry_dir,
-    get_registry_path,
+    get_repo_root,
     init_registry,
     is_module_registered,
+    link_module_into_container,
     progress,
     prompt_apparatus_names,
     read_archivist_config,
     reactivate_module,
-    register_apparatus,
-    register_module,
+    register_module_with_apparati,
+    resolve_container_module,
     success,
     warning,
     write_archivist_config,
@@ -87,6 +84,29 @@ def _install_hooks_local(target_dir: Path) -> None:
 # Git helpers
 # ---------------------------------------------------------------------------
 
+def _is_inside_git_worktree(cwd: Path) -> bool:
+    """
+    Return True if cwd is anywhere inside a git working tree — not just
+    exactly at its root.
+
+    The old check here was `(cwd / ".git").exists()`, which only catches
+    the literal top of a repo. Run `archivist add` from a subdirectory of
+    an existing vault — `vault/modules/`, say, which is a completely normal
+    place to keep your submodules — and that check says "nope, no repo
+    here" and cheerfully tries to `git clone` into a location that's
+    already under version control. Ask git, which actually knows the
+    answer, instead of guessing from directory structure.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, text=True, cwd=cwd,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "true"
+    except (OSError, subprocess.CalledProcessError):
+        return False
+
+
 def _infer_target_name(url: str) -> str:
     """
     Derive a local directory name from a git URL.
@@ -109,17 +129,33 @@ def _build_git_command(
     """
     Build the git clone or git submodule add command.
 
+    `git submodule add` is documented as `[<options>] [--] <repository> [<path>]`,
+    and `git clone` follows the same shape. Options come FIRST. This used to
+    tack passthrough onto the very end of the command — after the repo, after
+    the path — which meant a perfectly reasonable `--name foo` just sat there
+    uselessly like a fart in an elevator, doing nothing, matching nothing.
+    Git doesn't parse its own flags out of your positional soup after the
+    fact. Options first. Always. This is not a suggestion.
+
+    A literal `--` is inserted between the passthrough options and the URL
+    to stop a cursed repo name or path from being misread as a flag. Skipped
+    if the caller's passthrough already contains its own `--` — one separator
+    is plenty, we're not a buffet.
+
     When no path is given, git infers the directory name from the URL — same
     as what _infer_target_name does — so target_path stays accurate without
     us spelling it out to git.
     """
     if is_submodule_context:
-        cmd = ["git", "submodule", "add", url]
+        cmd = ["git", "submodule", "add"]
     else:
-        cmd = ["git", "clone", url]
+        cmd = ["git", "clone"]
+    cmd.extend(passthrough)
+    if "--" not in passthrough:
+        cmd.append("--")
+    cmd.append(url)
     if path_arg:
         cmd.append(path_arg)
-    cmd.extend(passthrough)
     return cmd
 
 
@@ -189,66 +225,9 @@ def _write_module_config(
     write_archivist_config(target_dir, config)
 
 
-def _update_vaults_list(target_dir: Path, vault_name: str) -> None:
-    """
-    Add vault_name to the `vaults` list in the target's config.yaml.
-
-    The `vaults` field is the config layer's record of which vault(s) contain
-    this module — human-readable names, not UUIDs. The DB layer's record is
-    the module_bays row; both are updated. This function handles the config half.
-
-    No-op if vault_name is already in the list.
-    """
-    config = read_archivist_config(target_dir) or {}
-    current: list[str] = list(config.get("vaults") or [])  # type: ignore[arg-type]
-    if vault_name in current:
-        return
-    current.append(vault_name)
-    updated: ConfigSchema = {"uuid": str(config.get("uuid", ""))}  # type: ignore[typeddict-item]
-    for k, v in config.items():
-        if k != "uuid":
-            updated[k] = v  # type: ignore[literal-required]
-    updated["vaults"] = current  # type: ignore[typeddict-item]
-    write_archivist_config(target_dir, updated)
-
-
 # ---------------------------------------------------------------------------
 # Registration helpers
 # ---------------------------------------------------------------------------
-
-def _do_register_module(
-    target_dir: Path,
-    apparatus_names: list[str],
-    module_type: str,
-    url: str,
-    git_remote_name: str | None,
-) -> str:
-    """
-    Upsert apparatus row(s) and the module row. Returns module UUID from
-    registry (existing UUID if the path was already registered; new UUID
-    if not).
-
-    register_module() only wires up ONE apparatus association at creation
-    time, so the first name in apparatus_names rides along with it; any
-    additional names get their own explicit membership row via
-    add_module_to_apparatus(). register_apparatus() is an idempotent upsert,
-    so calling it repeatedly for the same name across runs is harmless.
-    """
-    primary_apparatus, *extra_apparati = apparatus_names
-    register_apparatus(primary_apparatus, git_remote = None)  # registry remote ≠ module remote
-    module_uuid = register_module(
-        apparatus_name = primary_apparatus,
-        name = get_project_name(target_dir),
-        module_type = module_type,
-        path = target_dir,
-        git_remote = url,
-        git_remote_name = git_remote_name,
-    )
-    for extra_name in extra_apparati:
-        extra_uuid = register_apparatus(extra_name, git_remote = None)
-        add_module_to_apparatus(module_uuid, extra_uuid)
-    return module_uuid
-
 
 def _interactive_register(
     target_dir: Path,
@@ -270,14 +249,14 @@ def _interactive_register(
 
     if not is_apparatus:
         module_uuid = str(_uuid_module.uuid4())
-        config: ConfigSchema = {  # type: ignore[typeddict-item]
+        config: ConfigSchema = {
             "uuid": module_uuid,
             "module-type": "general",
             "git-remote": url,
         }
         if git_remote_name:
-            config["git-remote-name"] = git_remote_name  # type: ignore[typeddict-item]
-        config["ignores"] = []  # type: ignore[typeddict-item]
+            config["git-remote-name"] = git_remote_name
+        config["ignores"] = []
         write_archivist_config(target_dir, config)
         progress(
             "  Standalone module — UUID written to config. "
@@ -287,7 +266,13 @@ def _interactive_register(
 
     apparatus_names = prompt_apparatus_names()
     module_type = _prompt("  Select module type:", APPARATUS_MODULE_TYPES)
-    module_uuid = _do_register_module(target_dir, apparatus_names, module_type, url, git_remote_name)
+    module_uuid = register_module_with_apparati(
+        target_dir,
+        apparatus_names,
+        module_type,
+        url,
+        git_remote_name
+    )
 
     config = {  # type: ignore[assignment]
         "uuid": module_uuid,
@@ -347,7 +332,7 @@ def _resolve_and_register(
         # Refresh path + git_remote in registry regardless
         apparati: list[str] = list(target_config.get("apparati") or [])  # type: ignore[arg-type]
         if apparati:
-            _do_register_module(
+            register_module_with_apparati(
                 target_dir,
                 apparati,
                 str(target_config.get("module-type") or "general"),
@@ -363,7 +348,7 @@ def _resolve_and_register(
     module_type = str(target_config.get("module-type") or "general")
 
     if apparati:
-        module_uuid = _do_register_module(
+        module_uuid = register_module_with_apparati(
             target_dir, apparati, module_type, url, git_remote_name
         )
     else:
@@ -375,8 +360,12 @@ def _resolve_and_register(
         if is_apparatus:
             apparati = prompt_apparatus_names()
             target_config["apparati"] = apparati  # type: ignore[typeddict-item]
-            module_uuid = _do_register_module(
-                target_dir, apparati, module_type, url, git_remote_name
+            module_uuid = register_module_with_apparati(
+                target_dir,
+                apparati,
+                module_type,
+                url,
+                git_remote_name
             )
         else:
             # Standalone: keep existing UUID, skip registry write
@@ -403,19 +392,22 @@ def _print_dry_run_plan(
     progress(f"  [dry-run] Would run: {' '.join(git_cmd)}")
     progress(f"  [dry-run] Would register module at: {target_path}")
 
-    cwd_module: ModuleRow | None = None
-    if get_registry_path().exists():
-        cwd_module = get_module_by_path(cwd)
+    # Container lookup requires actually being inside a repo — get_repo_root()
+    # exits hard otherwise, which is the last thing a dry-run preview should
+    # do. is_submodule_context already told us whether cwd is inside one.
+    container_row: ModuleRow | None = None
+    if is_submodule_context:
+        container_row = resolve_container_module(get_repo_root())
 
-    if cwd_module and not cwd_module.get("decimated_at"):
-        progress(f"  [dry-run] Would add bay: {cwd_module['name']} ← {target_name}")
-        if cwd_module.get("module_type") == "vault":
+    if container_row:
+        progress(f"  [dry-run] Would add bay: {container_row['name']} ← {target_name}")
+        if container_row.get("module_type") == "vault":
             progress(
-                f"  [dry-run] Would add '{cwd_module['name']}' to target's vaults list."
+                f"  [dry-run] Would add '{container_row['name']}' to target's vaults list."
             )
     else:
         progress(
-            "  [dry-run] No registered superproject found — no bay row would be created."
+            "  [dry-run] No registered container found here — no bay row would be created."
         )
 
     progress("  [dry-run] Would install git hooks into target module.")
@@ -432,7 +424,16 @@ def run(args: argparse.Namespace) -> None:
     passthrough: list[str] = list(getattr(args, "passthrough", None) or [])
 
     cwd = Path.cwd()
-    is_submodule_context = (cwd / ".git").exists()
+    if dry_run:
+        # Dry run must not invoke so much as a read-only subprocess — see
+        # test_dry_run_does_not_execute_git, which is correct to demand
+        # this. Approximate with a raw filesystem check instead; it can't
+        # see "invoked from a subdirectory of a repo" the way the real
+        # check can, but a preview being slightly optimistic in a rare edge
+        # case beats breaking "dry-run touches nothing, full stop."
+        is_submodule_context = (cwd / ".git").exists()
+    else:
+        is_submodule_context = _is_inside_git_worktree(cwd)
 
     target_name = _infer_target_name(url)
     target_path = (cwd / (path_arg or target_name)).resolve()
@@ -469,22 +470,28 @@ def run(args: argparse.Namespace) -> None:
         git_remote_name=git_remote_name,
     )
 
-    # Bay management: cwd must be a registered, active module to create a bay row.
-    # Being in a git repo is not sufficient — the repo must be in the registry.
-    cwd_module: ModuleRow | None = None
-    if get_registry_path().exists():
-        cwd_module = get_module_by_path(cwd)
-
-    if cwd_module and not cwd_module.get("decimated_at") and is_module_registered(module_uuid):
-        add_module_to_bay(cwd_module["uuid"], module_uuid)
-        progress(f"  Bay registered: {cwd_module['name']} ← {target_name}")
-
-        # Update vaults list in target config if superproject is vault-type.
-        # module_bays row is always created regardless of container type;
-        # the vaults field in config is only updated for vault containers.
-        if cwd_module.get("module_type") == "vault":
-            _update_vaults_list(target_path, cwd_module["name"])
-            progress(f"  Added '{cwd_module['name']}' to target's vaults list.")
+    # Containment: being in a git repo is not sufficient on its own — the
+    # repo has to be a registered, active module, and the new module has to
+    # have actually made it into the registry (standalone modules don't).
+    #
+    # Container is resolved by the UUID its OWN config.yaml declares, not by
+    # matching cwd against a path string in the registry — see
+    # resolve_container_module()'s docstring if you're wondering why. Short
+    # version: paths go stale the moment a directory gets renamed or moved;
+    # the config file's uuid doesn't.
+    if is_submodule_context and is_module_registered(module_uuid):
+        container_row = resolve_container_module(get_repo_root())
+        if container_row:
+            link_module_into_container(container_row, module_uuid, target_path)
+            progress(f"  Bay registered: {container_row['name']} ← {target_name}")
+            if container_row.get("module_type") == "vault":
+                progress(f"  Added '{container_row['name']}' to target's vaults list.")
+        else:
+            progress(
+                "  No registered container found here — no bay row created. "
+                "Run `archivist init` (or `archivist sync`, once it exists) "
+                "at this level if it should be Apparatus-registered itself."
+            )
 
     # Hook install — non-fatal; user can re-run `archivist hooks sync`
     _install_hooks_local(target_path)

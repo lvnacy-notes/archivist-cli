@@ -229,7 +229,7 @@ def _git_cleanup(
     """
     if not target_path.exists():
         warning(
-            f"  '{target_path}' no longer exists on disk. "
+            f"  '{ target_path }' no longer exists on disk. "
             "Filesystem already clean — skipping git step."
         )
         return
@@ -240,7 +240,7 @@ def _git_cleanup(
         rel = str(target_path.relative_to(parent_git_root)).replace("\\", "/")
 
         deinit_cmd = ["git", "submodule", "deinit"] + passthrough + [rel]
-        progress(f"\n  ▶ {' '.join(deinit_cmd)}")
+        progress(f"\n  ▶ { ' '.join(deinit_cmd) }")
         try:
             runner(
                 deinit_cmd,
@@ -248,10 +248,10 @@ def _git_cleanup(
                 cwd = parent_git_root
             )
         except subprocess.CalledProcessError as e:
-            _git_failure(target_path, rel, e)
+            _git_failure(target_path, rel, e, passthrough)
 
-        rm_cmd = ["git", "rm", rel]
-        progress(f"  ▶ {' '.join(rm_cmd)}")
+        rm_cmd = ["git", "rm"] + passthrough + [rel]
+        progress(f"  ▶ { ' '.join(rm_cmd) }")
         try:
             runner(
                 rm_cmd,
@@ -259,7 +259,7 @@ def _git_cleanup(
                 cwd = parent_git_root
             )
         except subprocess.CalledProcessError as e:
-            _git_failure(target_path, rel, e)
+            _git_failure(target_path, rel, e, passthrough)
 
     else:
         progress(f"\n  Removing directory: {target_path}")
@@ -280,6 +280,7 @@ def _git_failure(
     target_path: Path,
     rel: str,
     e: subprocess.CalledProcessError,
+    passthrough: list[str],
 ) -> None:
     """
     Print specific recovery instructions after a git operation failure and exit.
@@ -287,14 +288,15 @@ def _git_failure(
     The registry is already clean at this point — Apparatus cleanup ran first.
     The user needs to know exactly what to do to finish the job manually.
     """
+    flags = f"{' '.join(passthrough)} " if passthrough else ""
     error(
-        f"Git operation failed (exit {e.returncode}). "
+        f"Git operation failed (exit { e.returncode }). "
         "Registry cleanup has already run.\n"
-        f"\n  The module directory at '{target_path}' still exists on disk."
+        f"\n  The module directory at '{ target_path }' still exists on disk."
         f"\n  To finish cleanup manually:"
-        f"\n    git submodule deinit {rel}"
-        f"\n    git rm {rel}"
-        f"\n  Then run: archivist deinit --retain {target_path}"
+        f"\n    git submodule deinit { flags }{ rel }"
+        f"\n    git rm { flags }{ rel }"
+        f"\n  Then run: archivist deinit --retain { target_path }"
     )
     sys.exit(1)
 

@@ -6,9 +6,9 @@ Integration tests for `archivist add`.
 The command is heavily interactive and git-dependent, so two isolation layers
 are always active:
 
-  1. Registry isolation — `isolated_registry` (autouse) patches get_registry_dir()
-     to tmp_path so no test ever writes to ~/.archivist/. Same pattern as
-     test_registry.py.
+  1. Registry isolation — `isolated_registry` (conftest.py, autouse) patches
+     get_registry_dir() to tmp_path so no test ever writes to ~/.archivist/.
+     Shared across the whole suite; not redefined here.
 
   2. Git isolation — subprocess.run and subprocess.check_output are patched to
      avoid real network calls. The git operation itself is the gate in
@@ -26,45 +26,27 @@ run() in a clean way.
 
 import argparse
 import subprocess
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-import archivist.utils.registry as registry_module
 from archivist.commands.add import (
     _build_git_command,
     _infer_target_name,
     run,
 )
 from archivist.utils import (
-    add_module_to_bay,
     decimate_module,
     get_apparatus_modules,
     get_module_bays,
     get_module_by_path,
     get_module_by_uuid,
-    get_registry_path,
     init_registry,
-    is_module_registered,
     read_archivist_config,
     register_apparatus,
     register_module,
 )
-
-
-# ===========================================================================
-# Isolation
-# ===========================================================================
-
-@pytest.fixture(autouse=True)
-def isolated_registry(tmp_path, monkeypatch):
-    """Redirect get_registry_dir() to tmp_path. Never touches ~/.archivist/."""
-    fake_dir = tmp_path / ".archivist"
-    # Patch in the registry module where the function is defined
-    monkeypatch.setattr(registry_module, "get_registry_dir", lambda: fake_dir)
-    return fake_dir
 
 
 # ===========================================================================
@@ -82,36 +64,86 @@ def _add_args(
     passthrough: list[str] | None = None,
 ) -> argparse.Namespace:
     return argparse.Namespace(
-        url=url,
-        path=path,
-        dry_run=dry_run,
-        passthrough=passthrough or [],
+        url = url,
+        path = path,
+        dry_run = dry_run,
+        passthrough = passthrough or [],
     )
 
 
-def _seed_target_config(target_dir: Path, apparatus: str, module_type: str = "library") -> None:
+def _seed_target_config(
+    target_dir: Path,
+    apparatus: str,
+    module_type: str = "library"
+) -> None:
     """
     Write a minimal .archivist/config.yaml into target_dir so that
     _resolve_and_register hits the 'UUID in config' branches rather than
     falling through to interactive registration.
     """
-    target_dir.mkdir(parents=True, exist_ok=True)
+    target_dir.mkdir(parents = True, exist_ok = True)
     archivist_dir = target_dir / ".archivist"
     archivist_dir.mkdir(exist_ok=True)
     (archivist_dir / "config.yaml").write_text(
         f"uuid: aaaaaaaa-0000-0000-0000-000000000000\n"
-        f"module-type: {module_type}\n"
+        f"module-type: { module_type }\n"
         f"apparati:\n"
-        f"  - {apparatus}\n",
+        f"  - { apparatus }\n",
         encoding="utf-8",
     )
 
 
 def _git_succeeds(monkeypatch) -> None:
-    """Patch subprocess so git operations silently succeed."""
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: MagicMock(returncode=0))
+    """
+    Patch subprocess so git operations silently succeed.
+
+    add.py now probes two things via subprocess.run that a bare
+    `MagicMock(returncode=0)` answers wrong in ways that don't raise, so the
+    test would silently misbehave instead of failing loudly:
+
+    - `git rev-parse --is-inside-work-tree` (see _is_inside_git_worktree):
+      a MagicMock .stdout never equals "true", so context detection would
+      silently fall through to the wrong branch.
+    - `git rev-parse --show-toplevel` (see get_repo_root, called from
+      resolve_container_module during containment linking): Path() does NOT
+      raise on a MagicMock — it silently stringifies it into a garbage path
+      via repr(), so the containment lookup quietly looks in a directory
+      that doesn't exist and reports "no registered container" instead of
+      erroring. Answer it with the real cwd, since these tests already
+      monkeypatch.chdir() to the repo root before calling this.
+
+    Special-case both; everything else gets the old blanket success.
+    """
+    def _run(
+        cmd,
+        *a,
+        **kw
+    ):
+        if cmd == [
+            "git",
+            "rev-parse",
+            "--is-inside-work-tree"
+        ]:
+            return MagicMock(returncode = 0, stdout = "true\n")
+        if cmd == [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+        ]:
+            return MagicMock(returncode = 0, stdout = f"{Path.cwd()}\n")
+        return MagicMock(returncode = 0)
+    
     monkeypatch.setattr(
-        subprocess, "check_output", lambda *a, **kw: b""
+        subprocess,
+        "run",
+        _run
+    )
+
+    monkeypatch.setattr(
+        subprocess,
+        "check_output",
+        lambda *a,
+        **kw: b""
     )
 
 
@@ -119,29 +151,46 @@ def _git_fails(monkeypatch, returncode: int = 128) -> None:
     """Patch subprocess so the git operation raises CalledProcessError."""
     def _raise(*args, **kwargs):
         raise subprocess.CalledProcessError(returncode, args[0])
-    monkeypatch.setattr(subprocess, "run", _raise)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        _raise
+    )
 
 
 def _suppress_hooks(monkeypatch) -> None:
     """Hook installation is non-fatal but noisy. Suppress it throughout."""
     monkeypatch.setattr(
-        "archivist.commands.add._install_hooks_local", lambda *a, **kw: None
+        "archivist.commands.add._install_hooks_local",
+        lambda *a,
+        **kw: None
     )
 
 
-def _suppress_prompts(monkeypatch, is_apparatus: bool = True, apparatus_names: list[str] | None = None) -> None:
+def _suppress_prompts(
+    monkeypatch,
+    is_apparatus: bool = True,
+    apparatus_names: list[str] | None = None
+) -> None:
     """
     Suppress all interactive prompts. Tests that exercise specific prompt
     behaviour should patch these individually instead of calling this.
     """
     if apparatus_names is None:
         apparatus_names = ["writing"]
-    monkeypatch.setattr("archivist.commands.add._confirm", lambda *a, **kw: is_apparatus)
     monkeypatch.setattr(
-        "archivist.commands.add.prompt_apparatus_names", lambda: apparatus_names
+        "archivist.commands.add._confirm",
+        lambda *a,
+        **kw: is_apparatus
     )
     monkeypatch.setattr(
-        "archivist.commands.add._prompt", lambda *a, **kw: "library"
+        "archivist.commands.add.prompt_apparatus_names",
+        lambda: apparatus_names
+    )
+    monkeypatch.setattr(
+        "archivist.commands.add._prompt",
+        lambda *a,
+        **kw: "library"
     )
 
 
@@ -173,32 +222,157 @@ class TestInferTargetName:
 
 
 class TestBuildGitCommand:
+    """
+    git submodule add is documented as `[<options>] [--] <repository> [<path>]`,
+    and git clone follows the same shape. Options — including passthrough
+    flags — must land BEFORE the repository and path, with a literal '--'
+    separating them so a cursed URL or path never gets misread as a flag.
+
+    This used to be wrong: passthrough got appended after url/path, where git
+    either ignored it or choked. Fixed in _build_git_command; these tests pin
+    the corrected contract instead of the broken one they used to encode.
+    """
 
     def test_clone_without_path(self):
-        cmd = _build_git_command(_FAKE_URL, None, [], is_submodule_context=False)
-        assert cmd == ["git", "clone", _FAKE_URL]
+        cmd = _build_git_command(
+            _FAKE_URL,
+            None,
+            [],
+            is_submodule_context = False
+        )
+        assert cmd == [
+            "git",
+            "clone",
+            "--",
+            _FAKE_URL
+        ]
 
     def test_clone_with_path(self):
-        cmd = _build_git_command(_FAKE_URL, "my-dir", [], is_submodule_context=False)
-        assert cmd == ["git", "clone", _FAKE_URL, "my-dir"]
+        cmd = _build_git_command(
+            _FAKE_URL,
+            "my-dir",
+            [],
+            is_submodule_context = False
+        )
+        assert cmd == [
+            "git",
+            "clone",
+            "--",
+            _FAKE_URL,
+            "my-dir"
+        ]
 
     def test_submodule_add_without_path(self):
-        cmd = _build_git_command(_FAKE_URL, None, [], is_submodule_context=True)
-        assert cmd == ["git", "submodule", "add", _FAKE_URL]
+        cmd = _build_git_command(
+            _FAKE_URL,
+            None,
+            [],
+            is_submodule_context = True
+        )
+        assert cmd == [
+            "git",
+            "submodule",
+            "add",
+            "--",
+            _FAKE_URL
+        ]
 
     def test_submodule_add_with_path(self):
-        cmd = _build_git_command(_FAKE_URL, "my-dir", [], is_submodule_context=True)
-        assert cmd == ["git", "submodule", "add", _FAKE_URL, "my-dir"]
+        cmd = _build_git_command(
+            _FAKE_URL,
+            "my-dir",
+            [],
+            is_submodule_context = True
+        )
+        assert cmd == [
+            "git",
+            "submodule",
+            "add",
+            "--",
+            _FAKE_URL,
+            "my-dir"
+        ]
 
-    def test_passthrough_args_appended(self):
-        cmd = _build_git_command(_FAKE_URL, None, ["--depth=1", "--branch=main"], is_submodule_context=False)
-        assert "--depth=1" in cmd
-        assert "--branch=main" in cmd
-        assert cmd[-2:] == ["--depth=1", "--branch=main"]
+    def test_passthrough_args_precede_url(self):
+        """
+        Passthrough options are git flags. git clone requires flags before the
+        repository, not after — appending them post-URL is exactly the bug
+        that made --name/--depth/etc. useless to begin with.
+        """
+        cmd = _build_git_command(
+            _FAKE_URL,
+            None,
+            ["--depth = 1", "--branch = main"],
+            is_submodule_context = False
+        )
+        assert cmd == [
+            "git",
+            "clone",
+            "--depth = 1",
+            "--branch = main",
+            "--",
+            _FAKE_URL
+        ]
+
+    def test_passthrough_with_path_precedes_both(self):
+        """Same ordering requirement holds with an explicit target path too."""
+        cmd = _build_git_command(
+            _FAKE_URL,
+            "my-dir",
+            ["--name", "custom"],
+            is_submodule_context = True
+        )
+        assert cmd == [
+            "git",
+            "submodule",
+            "add",
+            "--name",
+            "custom",
+            "--",
+            _FAKE_URL,
+            "my-dir"
+        ]
+
+    def test_passthrough_containing_own_separator_not_duplicated(self):
+        """
+        If the caller's passthrough already contains a literal '--' (e.g. they
+        typed `archivist add repo.git -- --branch main` and it rode through
+        as-is), don't insert a second one. One separator is plenty — two just
+        makes git treat the first '--' itself as a positional argument.
+        """
+        cmd = _build_git_command(
+            _FAKE_URL,
+            None,
+            [
+                "--",
+                "--branch",
+                "main"
+            ],
+            is_submodule_context=True
+        )
+        assert cmd == [
+            "git",
+            "submodule",
+            "add",
+            "--",
+            "--branch",
+            "main",
+            _FAKE_URL
+        ]
 
     def test_clone_context_determined_by_flag(self):
-        clone_cmd = _build_git_command(_FAKE_URL, None, [], is_submodule_context=False)
-        sub_cmd   = _build_git_command(_FAKE_URL, None, [], is_submodule_context=True)
+        clone_cmd = _build_git_command(
+            _FAKE_URL,
+            None,
+            [],
+            is_submodule_context = False
+        )
+        sub_cmd = _build_git_command(
+            _FAKE_URL,
+            None,
+            [],
+            is_submodule_context = True
+        )
         assert "clone" in clone_cmd
         assert "submodule" in sub_cmd
 
@@ -213,36 +387,53 @@ class TestDryRun:
     no files written. The plan must be printed but nothing else must change.
     """
 
-    def test_dry_run_writes_absolutely_nothing(self, tmp_path, monkeypatch):
+    def test_dry_run_writes_absolutely_nothing(
+        self,
+        tmp_path,
+        monkeypatch
+    ):
         monkeypatch.chdir(tmp_path)
         init_registry()
         _suppress_hooks(monkeypatch)
         _suppress_prompts(monkeypatch)
 
-        before_files = {p for p in tmp_path.rglob("*") if p.is_file()}
+        before_files = { p for p in tmp_path.rglob("*") if p.is_file() }
 
         # Patch subprocess so it would succeed if called — but it shouldn't be
         git_called = []
         def _git_spy(*args, **kwargs):
             git_called.append(args)
             return MagicMock(returncode=0)
-        monkeypatch.setattr(subprocess, "run", _git_spy)
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            _git_spy
+        )
 
-        run(_add_args(dry_run=True))
+        run(_add_args(dry_run = True))
 
         after_files = {p for p in tmp_path.rglob("*") if p.is_file()}
         assert before_files == after_files, (
-            "dry_run=True and files still changed. A dry run that writes is just called a run."
+            "dry_run = True and files still changed. A dry run that writes is just called a run."
         )
 
-    def test_dry_run_does_not_touch_registry(self, tmp_path, monkeypatch):
+    def test_dry_run_does_not_touch_registry(
+        self,
+        tmp_path,
+        monkeypatch
+    ):
         monkeypatch.chdir(tmp_path)
         init_registry()
         _suppress_hooks(monkeypatch)
         _suppress_prompts(monkeypatch)
-        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: MagicMock(returncode=0))
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a,
+            **kw: MagicMock(returncode = 0)
+        )
 
-        run(_add_args(dry_run=True))
+        run(_add_args(dry_run = True))
 
         # No module should have been written to the registry
         target_path = (tmp_path / _FAKE_MODULE_NAME).resolve()
@@ -251,30 +442,49 @@ class TestDryRun:
             "Dry runs must not touch the registry."
         )
 
-    def test_dry_run_does_not_execute_git(self, tmp_path, monkeypatch):
+    def test_dry_run_does_not_execute_git(
+        self,
+        tmp_path,
+        monkeypatch
+    ):
         monkeypatch.chdir(tmp_path)
         init_registry()
         _suppress_hooks(monkeypatch)
         _suppress_prompts(monkeypatch)
 
         git_called = []
-        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: git_called.append(a) or MagicMock(returncode=0))
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a,
+            **kw: git_called.append(a) or MagicMock(returncode = 0)
+        )
 
-        run(_add_args(dry_run=True))
+        run(_add_args(dry_run = True))
 
         assert not git_called, (
-            f"dry_run=True and git was called anyway: {git_called}. "
+            f"dry_run = True and git was called anyway: { git_called }. "
             "The whole point of --dry-run is that git doesn't run."
         )
 
-    def test_dry_run_prints_plan(self, tmp_path, monkeypatch, capsys):
+    def test_dry_run_prints_plan(
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys
+    ):
         monkeypatch.chdir(tmp_path)
         init_registry()
         _suppress_hooks(monkeypatch)
         _suppress_prompts(monkeypatch)
-        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: MagicMock(returncode=0))
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a,
+            **kw: MagicMock(returncode = 0)
+        )
 
-        run(_add_args(dry_run=True))
+        run(_add_args(dry_run = True))
 
         out = capsys.readouterr().out + capsys.readouterr().err
         # Something describing the planned operation must have been printed.
@@ -293,7 +503,11 @@ class TestClonePath:
     cwd has no .git → is_submodule_context=False → git clone runs.
     """
 
-    def test_git_clone_is_called_in_non_git_context(self, tmp_path, monkeypatch):
+    def test_git_clone_is_called_in_non_git_context(
+        self,
+        tmp_path,
+        monkeypatch
+    ):
         """No .git in cwd → subprocess.run must be called with 'clone'."""
         monkeypatch.chdir(tmp_path)
         _suppress_hooks(monkeypatch)
@@ -302,7 +516,7 @@ class TestClonePath:
         # Registry setup must happen before subprocess is patched — init_registry()
         # calls git init internally and must not hit the capture spy.
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
 
         target_dir = tmp_path / _FAKE_MODULE_NAME
         _seed_target_config(target_dir, "writing")
@@ -310,19 +524,32 @@ class TestClonePath:
         git_cmds = []
         def _capture(cmd, **kwargs):
             git_cmds.append(cmd)
-            return MagicMock(returncode=0)
-        monkeypatch.setattr(subprocess, "run", _capture)
-        monkeypatch.setattr(subprocess, "check_output", lambda *a, **kw: b"")
+            return MagicMock(returncode = 0)
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            _capture
+        )
+        monkeypatch.setattr(
+            subprocess,
+            "check_output",
+            lambda *a,
+            **kw: b""
+        )
 
         run(_add_args())
 
         clone_calls = [c for c in git_cmds if "clone" in c]
         assert clone_calls, (
             f"Expected a 'git clone' call in a non-git directory. "
-            f"Got: {git_cmds}"
+            f"Got: { git_cmds }"
         )
 
-    def test_module_registered_after_clone(self, tmp_path, monkeypatch):
+    def test_module_registered_after_clone(
+        self,
+        tmp_path,
+        monkeypatch
+    ):
         monkeypatch.chdir(tmp_path)
         _suppress_hooks(monkeypatch)
         _suppress_prompts(monkeypatch)
@@ -331,7 +558,7 @@ class TestClonePath:
         _seed_target_config(target_dir, "writing")
         _git_succeeds(monkeypatch)
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
 
         run(_add_args())
 
@@ -341,7 +568,11 @@ class TestClonePath:
             "Registry write must follow a successful git operation."
         )
 
-    def test_no_bay_row_created_when_cwd_unregistered(self, tmp_path, monkeypatch):
+    def test_no_bay_row_created_when_cwd_unregistered(
+        self,
+        tmp_path,
+        monkeypatch
+    ):
         """
         cwd is not a registered module — no bay row should be created.
         Being in a directory is not the same as being in a registered superproject.
@@ -354,7 +585,7 @@ class TestClonePath:
         _seed_target_config(target_dir, "writing")
         _git_succeeds(monkeypatch)
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
 
         run(_add_args())
 
@@ -376,7 +607,11 @@ class TestSubmodulePath:
     cwd has .git → is_submodule_context=True → git submodule add runs.
     """
 
-    def test_git_submodule_add_is_called_in_git_context(self, git_repo, monkeypatch):
+    def test_git_submodule_add_is_called_in_git_context(
+        self,
+        git_repo,
+        monkeypatch
+    ):
         monkeypatch.chdir(git_repo.path)
         _suppress_hooks(monkeypatch)
         _suppress_prompts(monkeypatch)
@@ -384,7 +619,7 @@ class TestSubmodulePath:
         # Registry setup before subprocess is patched — init_registry() calls
         # git init and must not hit the capture spy.
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
 
         target_dir = git_repo.path / _FAKE_MODULE_NAME
         _seed_target_config(target_dir, "writing")
@@ -392,18 +627,38 @@ class TestSubmodulePath:
         git_cmds = []
         def _capture(cmd, **kwargs):
             git_cmds.append(cmd)
-            return MagicMock(returncode=0)
-        monkeypatch.setattr(subprocess, "run", _capture)
-        monkeypatch.setattr(subprocess, "check_output", lambda *a, **kw: b"")
+            if cmd == [
+                "git",
+                "rev-parse",
+                "--is-inside-work-tree"
+            ]:
+                return MagicMock(returncode = 0, stdout = "true\n")
+            return MagicMock(returncode = 0)
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            _capture
+        )
+        monkeypatch.setattr(
+            subprocess,
+            "check_output",
+            lambda *a,
+            **kw: b""
+        )
 
         run(_add_args())
 
         submodule_calls = [c for c in git_cmds if "submodule" in c and "add" in c]
         assert submodule_calls, (
-            f"Expected 'git submodule add' in a git-repo context. Got: {git_cmds}"
+            f"Expected 'git submodule add' in a git-repo context. Got: { git_cmds }"
         )
 
-    def test_bay_row_created_when_cwd_is_registered(self, git_repo, monkeypatch):
+    def test_bay_row_created_when_cwd_is_registered(
+        self,
+        git_repo,
+        monkeypatch,
+        write_archivist_config,
+    ):
         """
         cwd is a registered active module → adding a submodule must create a bay row.
         """
@@ -413,15 +668,24 @@ class TestSubmodulePath:
         _git_succeeds(monkeypatch)
 
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
 
-        # Register the cwd (vault) so add() sees it as a superproject
+        # Register the cwd (vault) so add() sees it as a superproject.
+        # resolve_container_module() reads the container's OWN declared
+        # uuid from its .archivist/config.yaml — registering in the DB
+        # alone isn't enough, the config on disk has to say so too.
         vault_uuid = register_module(
-            apparatus_name="writing",
-            name="fiction-vault",
-            module_type="vault",
+            apparatus_name = "writing",
+            name = "fiction-vault",
+            module_type = "vault",
             path=git_repo.path,
-            git_remote=None,
+            git_remote = None,
+        )
+        write_archivist_config(
+            git_repo.path,
+            vault_uuid,
+            apparati = "writing",
+            module_type = "vault"
         )
 
         target_dir = git_repo.path / _FAKE_MODULE_NAME
@@ -433,11 +697,16 @@ class TestSubmodulePath:
         assert target_module is not None
         bays = get_module_bays(target_module["uuid"])
         assert len(bays) == 1, (
-            f"Expected 1 bay row (cwd is a registered vault). Got {len(bays)}."
+            f"Expected 1 bay row (cwd is a registered vault). Got { len(bays) }."
         )
         assert bays[0]["uuid"] == vault_uuid
 
-    def test_no_bay_row_when_cwd_registered_but_decimated(self, git_repo, monkeypatch):
+    def test_no_bay_row_when_cwd_registered_but_decimated(
+        self,
+        git_repo,
+        monkeypatch,
+        write_archivist_config
+    ):
         """
         cwd IS in the registry but is decimated — must not create a bay row.
         A decimated module is not an active superproject.
@@ -448,13 +717,19 @@ class TestSubmodulePath:
         _git_succeeds(monkeypatch)
 
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
         vault_uuid = register_module(
-            apparatus_name="writing",
-            name="fiction-vault",
-            module_type="vault",
-            path=git_repo.path,
-            git_remote=None,
+            apparatus_name = "writing",
+            name = "fiction-vault",
+            module_type = "vault",
+            path = git_repo.path,
+            git_remote = None,
+        )
+        write_archivist_config(
+            git_repo.path,
+            vault_uuid,
+            apparati = "writing",
+            module_type = "vault"
         )
         decimate_module(vault_uuid)
 
@@ -471,7 +746,12 @@ class TestSubmodulePath:
             "Decimated modules are not active superprojects."
         )
 
-    def test_vault_container_updates_vaults_list_in_target_config(self, git_repo, monkeypatch):
+    def test_vault_container_updates_vaults_list_in_target_config(
+        self,
+        git_repo,
+        monkeypatch,
+        write_archivist_config
+    ):
         """
         When cwd is a vault-type module, the target's config.yaml `vaults`
         field must be updated with the vault's name. The DB bay row and the
@@ -483,13 +763,19 @@ class TestSubmodulePath:
         _git_succeeds(monkeypatch)
 
         init_registry()
-        register_apparatus("writing", git_remote=None)
-        register_module(
-            apparatus_name="writing",
-            name="fiction-vault",
-            module_type="vault",
-            path=git_repo.path,
-            git_remote=None,
+        register_apparatus("writing", git_remote = None)
+        vault_uuid = register_module(
+            apparatus_name = "writing",
+            name = "fiction-vault",
+            module_type = "vault",
+            path = git_repo.path,
+            git_remote = None,
+        )
+        write_archivist_config(
+            git_repo.path,
+            vault_uuid,
+            apparati = "writing",
+            module_type = "vault"
         )
 
         target_dir = git_repo.path / _FAKE_MODULE_NAME
@@ -501,7 +787,7 @@ class TestSubmodulePath:
         assert config is not None
         vaults = config.get("vaults") or []
         assert "fiction-vault" in vaults, (
-            f"Vault name not written to target's vaults list. Got: {vaults}. "
+            f"Vault name not written to target's vaults list. Got: { vaults }. "
             "Both the bay row and the config field must be updated."
         )
 
@@ -516,7 +802,11 @@ class TestGitFailure:
     That's the entire contract of the command's operation order.
     """
 
-    def test_registry_untouched_on_git_failure(self, tmp_path, monkeypatch):
+    def test_registry_untouched_on_git_failure(
+        self,
+        tmp_path,
+        monkeypatch
+    ):
         monkeypatch.chdir(tmp_path)
         _suppress_hooks(monkeypatch)
         _suppress_prompts(monkeypatch)
@@ -524,7 +814,7 @@ class TestGitFailure:
         # Registry must be initialised before subprocess is patched to fail —
         # init_registry() calls git init and would blow up on the failure mock.
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
 
         target_dir = tmp_path / _FAKE_MODULE_NAME
         _seed_target_config(target_dir, "writing")
@@ -539,7 +829,11 @@ class TestGitFailure:
             "git is the gate — registry writes happen AFTER git succeeds."
         )
 
-    def test_exits_with_propagated_return_code(self, tmp_path, monkeypatch):
+    def test_exits_with_propagated_return_code(
+        self,
+        tmp_path,
+        monkeypatch
+    ):
         monkeypatch.chdir(tmp_path)
         _suppress_hooks(monkeypatch)
         _suppress_prompts(monkeypatch)
@@ -547,21 +841,25 @@ class TestGitFailure:
         # Registry must be initialised before subprocess is patched to fail —
         # init_registry() calls git init and would blow up on the failure mock.
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
 
         target_dir = tmp_path / _FAKE_MODULE_NAME
         _seed_target_config(target_dir, "writing")
 
         def _fail(*args, **kwargs):
             raise subprocess.CalledProcessError(42, args[0])
-        monkeypatch.setattr(subprocess, "run", _fail)
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            _fail
+        )
 
         with pytest.raises(SystemExit) as exc_info:
             run(_add_args())
 
         assert exc_info.value.code == 42, (
             f"Expected exit code 42 (propagated from git). "
-            f"Got: {exc_info.value.code}."
+            f"Got: { exc_info.value.code }."
         )
 
 
@@ -575,7 +873,11 @@ class TestUUIDResolution:
     registry state without prompting the user for information we already have.
     """
 
-    def test_case_b_active_module_readded_no_duplicate_row(self, git_repo, monkeypatch):
+    def test_case_b_active_module_readded_no_duplicate_row(
+        self,
+        git_repo,
+        monkeypatch
+    ):
         """
         Case b: UUID in config + active in registry → refresh; no duplicate module row.
         """
@@ -585,7 +887,7 @@ class TestUUIDResolution:
         _git_succeeds(monkeypatch)
 
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
 
         target_dir = git_repo.path / _FAKE_MODULE_NAME
         _seed_target_config(target_dir, "writing")
@@ -598,11 +900,15 @@ class TestUUIDResolution:
         modules = get_apparatus_modules("writing")
         target_modules = [m for m in modules if "cosmic-horror" in m["name"]]
         assert len(target_modules) == 1, (
-            f"Expected 1 module row after two adds. Got {len(target_modules)}. "
+            f"Expected 1 module row after two adds. Got { len(target_modules) }. "
             "Re-adding an active module must upsert, not duplicate."
         )
 
-    def test_case_a_decimated_module_reactivated(self, git_repo, monkeypatch):
+    def test_case_a_decimated_module_reactivated(
+        self,
+        git_repo,
+        monkeypatch
+    ):
         """
         Case a: UUID in config + decimated in registry → reactivate; decimated_at cleared.
         """
@@ -612,7 +918,7 @@ class TestUUIDResolution:
         _git_succeeds(monkeypatch)
 
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
 
         target_dir = git_repo.path / _FAKE_MODULE_NAME
         _seed_target_config(target_dir, "writing")
@@ -640,7 +946,12 @@ class TestUUIDResolution:
             "Case (a) of the UUID resolution matrix is broken."
         )
 
-    def test_case_b_bay_row_added_if_absent_on_reregister(self, git_repo, monkeypatch):
+    def test_case_b_bay_row_added_if_absent_on_reregister(
+        self,
+        git_repo,
+        monkeypatch,
+        write_archivist_config
+    ):
         """
         Case b: active re-add in a superproject context must create the bay row
         if it doesn't already exist (e.g. re-add after deinit left the module
@@ -652,13 +963,19 @@ class TestUUIDResolution:
         _git_succeeds(monkeypatch)
 
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
         vault_uuid = register_module(
-            apparatus_name="writing",
-            name="fiction-vault",
-            module_type="vault",
-            path=git_repo.path,
-            git_remote=None,
+            apparatus_name = "writing",
+            name = "fiction-vault",
+            module_type = "vault",
+            path = git_repo.path,
+            git_remote = None,
+        )
+        write_archivist_config(
+            git_repo.path,
+            vault_uuid,
+            apparati = "writing",
+            module_type = "vault"
         )
 
         target_dir = git_repo.path / _FAKE_MODULE_NAME
@@ -687,7 +1004,11 @@ class TestGitRemoteName:
     to resolve the remote name. Pin both the success and null cases.
     """
 
-    def test_git_remote_name_populated_from_remote_v(self, tmp_path, monkeypatch):
+    def test_git_remote_name_populated_from_remote_v(
+        self,
+        tmp_path: Path,
+        monkeypatch
+    ):
         """
         git remote -v returns a line containing the URL → remote name stored.
         """
@@ -704,6 +1025,7 @@ class TestGitRemoteName:
         # Second is git remote -v — returns a fake remote line.
         remote_v_output = f"origin\t{_FAKE_URL} (fetch)\norigin\t{_FAKE_URL} (push)\n"
         call_count = [0]
+
         def _fake_run(cmd, **kwargs):
             call_count[0] += 1
             m = MagicMock()
@@ -713,19 +1035,33 @@ class TestGitRemoteName:
             else:
                 m.stdout = ""
             return m
-        monkeypatch.setattr(subprocess, "run", _fake_run)
-        monkeypatch.setattr(subprocess, "check_output", lambda *a, **kw: b"")
+        
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            _fake_run
+        )
+        monkeypatch.setattr(
+            subprocess,
+            "check_output",
+            lambda *a,
+            **kw: b""
+        )
 
         run(_add_args())
 
         result = get_module_by_path(target_dir)
         assert result is not None
         assert result["git_remote_name"] == "origin", (
-            f"Expected git_remote_name='origin'. Got: {result['git_remote_name']!r}. "
+            f"Expected git_remote_name='origin'. Got: { result['git_remote_name']!r }. "
             "Remote name must be resolved from git remote -v after the operation."
         )
 
-    def test_git_remote_name_null_when_remote_not_found(self, tmp_path, monkeypatch):
+    def test_git_remote_name_null_when_remote_not_found(
+        self,
+        tmp_path,
+        monkeypatch
+    ):
         """
         git remote -v returns nothing useful → git_remote_name stored as NULL.
         Happens when the remote isn't configured yet (e.g. fresh clone with no push remote).
@@ -734,7 +1070,7 @@ class TestGitRemoteName:
         _suppress_hooks(monkeypatch)
         _suppress_prompts(monkeypatch)
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
 
         target_dir = tmp_path / _FAKE_MODULE_NAME
         _seed_target_config(target_dir, "writing")
@@ -744,8 +1080,18 @@ class TestGitRemoteName:
             m.returncode = 0
             m.stdout = ""  # no remote output
             return m
-        monkeypatch.setattr(subprocess, "run", _fake_run)
-        monkeypatch.setattr(subprocess, "check_output", lambda *a, **kw: b"")
+        
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            _fake_run
+        )
+        monkeypatch.setattr(
+            subprocess,
+            "check_output",
+            lambda *a,
+            **kw: b""
+        )
 
         run(_add_args())
 
@@ -753,5 +1099,5 @@ class TestGitRemoteName:
         assert result is not None
         assert result["git_remote_name"] is None, (
             f"Expected git_remote_name=None when remote not found. "
-            f"Got: {result['git_remote_name']!r}."
+            f"Got: { result['git_remote_name']!r }."
         )

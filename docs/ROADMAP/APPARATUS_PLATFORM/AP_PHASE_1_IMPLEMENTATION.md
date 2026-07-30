@@ -8,7 +8,7 @@ category:
   - git
 affiliations:
 created: 2026-05-21
-modified: 2026-06-23
+modified: 2026-07-28
 version:
 related:
   - "[[APPARATUS_PLATFORM]]"
@@ -21,7 +21,9 @@ tags:
 
 > The net exists. Don't fucking tear holes in it.
 
-Phase 1 ships as a single unit: registry infrastructure, two new commands, `init` and `migrate` augmentations, and hook updates. Nothing in Phase 1 is optional. Nothing ships with a failing test.
+Phase 1 ships as a single unit: registry infrastructure, three new commands (`add`, `deinit`, `sync`), an `init` augmentation, and hook updates. Nothing in Phase 1 is optional. Nothing ships with a failing test.
+
+> 📌 **Post-implementation note:** `archivist migrate` — originally planned as a sibling command handling legacy `.archivist` flat-file and `apparatus`-field migration — was cut during implementation. Its responsibilities didn't need a whole command; they got folded into `init`, which already had to handle "existing config, needs updating" as a first-class case. `sync` was added instead, covering a genuinely different problem: non-interactive registry backfill for modules that already have a valid config but never got wired into `~/.archivist/`. See §9 and the new §9a below — this doc has been updated in place rather than left describing a command that doesn't exist.
 
 Phase 2 does not begin until Phase 1 is committed, tested, and stable.
 
@@ -41,13 +43,13 @@ Follow this sequence. Each group depends on the one before it.
 4. archivist init (augmented)  — depends on registry.py + ConfigSchema
 5. archivist add               — depends on registry.py
 6. archivist deinit            — depends on registry.py
-7. archivist migrate (augment) — depends on ConfigSchema
+7. archivist sync               — depends on registry.py + init (falls back to it)
 8. Hook augmentation           — depends on registry.py
 9. CLI parser updates          — alongside or after commands
 10. Tests                      — last; cover everything
 ```
 
-Do not implement `archivist add` or `archivist deinit` before `registry.py` exists. Do not augment `archivist init` before `ConfigSchema` is defined. The order is a dependency graph, not a suggestion.
+Do not implement `archivist add` or `archivist deinit` before `registry.py` exists. Do not augment `archivist init` before `ConfigSchema` is defined. Do not implement `sync` before `init` exists — every non-interactive-resolution failure in `sync` hands off to `init`. The order is a dependency graph, not a suggestion.
 
 ---
 
@@ -214,33 +216,38 @@ New module. Barrel-exported. All registry DB access goes through this module —
 
 > 🚫 **Blocked on:** `registry.py` (§4) and `ConfigSchema` (§5) complete.
 
+> 📌 **Scope grew mid-implementation.** `archivist migrate` was cut (see intro note above), and its two jobs — resurrecting a legacy flat `.archivist` file, and backfilling a `uuid` onto a config that never got one — landed here instead, folded into the "existing config" branch `init` already needed. `init` was always going to be the command that inspects `.archivist/config.yaml` and decides what's missing; teaching it two more "missing" cases was less surface area than a whole extra command that only ever delegated back to it anyway. `sync` (§9a) is the thing that actually calls `init` when it hits one of these cases non-interactively.
+
 - [x] Git context check: look for `.git` in the working directory **before** calling `get_repo_root()`
   - Found: proceed normally
-  - Not found: run `git init` via subprocess; then proceed
+  - Not found: prompt to run `git init`; decline → exit cleanly; accept → run it via subprocess, then proceed
+- [x] Legacy flat-file detection: capture `was_flat_config` (existing config found at the flat `.archivist` path, not the directory form) **before** any write touches it — `write_archivist_config()` silently evicts the flat file the instant it writes the directory form, so this is the only point in the run where the question is still answerable
 - [x] After existing config flow: check for `~/.archivist/`
   - Absent: call `init_registry()`; prompt for registry remote URL (see below)
   - Present: proceed directly to apparatus registration
-- [x] Registry remote prompt (first-run only):
-  - List configured git remotes from the current module repo as URL examples
-  - Accept manual URL entry
-  - Accept skip — warn clearly that `archivist restore` cannot function without a registry remote
-- [x] Apparatus registration (added after config write):
+- [x] Apparatus registration, now multi-select (per the §13 remedial multi-apparati work — this shipped as multi-select from the start, not single-then-upgraded):
   - Prompt: is this module part of an Apparatus?
-  - Yes → prompt apparatus name; show existing apparatus names if any
+  - Yes → `prompt_apparatus_names()`: numbered menu of existing apparati plus "Create new"; accepts multiple selections per round; loops until the user is done adding
     - New apparatus → `register_apparatus()`; create apparatus DB
-    - Existing → confirm; proceed to `register_module()`; insert `module_apparatus` row
+    - Existing → confirm; proceed to `register_module_with_apparati()`; insert `module_apparatus` row(s)
   - No → skip registry writes; UUID still generated
-- [x] `git_remote` + `git_remote_name` resolution: follow spec §10 workflow
-- [x] UUID: generate if absent; write to config as **first field**
-- [x] `apparati` config field: write list containing the apparatus name; render as YAML block sequence
-- [x] Upsert `modules` row via `register_module()`; insert `module_apparatus` row separately
+- [x] Module-type-specific prompts: `works-dir` for `library` modules; `changelog-output-dir` (optional, any module type); Templater mode (`resolve` / `preserve` / `false`, default `preserve`)
+- [x] `git_remote` + `git_remote_name` resolution: follow spec §10 workflow — apparatus modules only, not standalone
+- [x] UUID: generate if absent (or reuse the existing one for a standalone module being updated); registry upsert runs UUID → config for apparatus modules; write to config as **first field** either way
+- [x] `apparati` config field: write the full list from `prompt_apparatus_names()`; render as YAML block sequence
+- [x] Upsert `modules` row via `register_module_with_apparati()` (the same shared helper `add` uses — see `CODE_CONVENTIONS.md`); `module_apparatus` row(s) inserted as part of that call, not separately
+- [x] For `library` modules: write `.archivist/sample-changelog.py` from the bundled package resource, unless one already exists (never clobber a live plugin or an existing sample)
+- [x] Stage `.archivist/` after writing; if `was_flat_config`, stage the flat file's deletion in the same call so both halves land as one logical change — non-fatal on failure, warn with manual `git add` instructions
+- [x] Containment check (module being init'd is itself nested in a git submodule): resolve via `get_superproject_root()` + `resolve_container_module()`, same UUID-based resolution `add` and `sync` use — link into the container's bay if found, apparatus modules only
 - [x] Dry-run: print git init command and all registry operations; execute neither
 
 > 🔴 The git check must happen **before** `get_repo_root()`. The existing code calls `get_repo_root()` at the top of `run()`. That call shells out to `git rev-parse --show-toplevel`, which exits non-zero if there's no git repo — which means it calls `sys.exit(1)` before init gets a chance to run `git init`. Fix the order. Check for `.git` first, optionally run `git init`, then call `get_repo_root()`.
 
-> ⚠️ When prompting for apparatus name, present any existing apparatus names from `registry.db` so the user can confirm they're adding to an existing one rather than accidentally creating a duplicate with a typo. The prompt matters here — `"writing"` and `"Writing"` should not both exist.
+> ⚠️ When prompting for apparatus name(s), `prompt_apparatus_names()` presents any existing apparatus names from `registry.db` so the user can confirm they're adding to an existing one rather than accidentally creating a duplicate with a typo. The prompt matters here — `"writing"` and `"Writing"` should not both exist.
 
-> 📌 The `vaults` field in config is populated by `archivist add` when this module is added to a superproject, not by `archivist init`. Do not prompt for it here.
+> ⚠️ **Legacy flat-file and missing-uuid handling is now init's job, not a separate command's — and it doesn't special-case old field formats to do it.** There's no `apparatus: "true"` / `apparatus: "<name>"` detection logic anywhere in `init.py`. On a confirmed "Update configuration?", `final_config` is rebuilt entirely from fresh prompts — only `existing_uuid` is carried forward from the old config, nothing else. Any legacy `apparatus` (singular) key just isn't in the fields `init` writes back, so it's gone on the next write, no translation step required. The flat-file eviction is the same story: `write_archivist_config()` always writes the directory form, so a flat `.archivist` file simply stops being read once `config.yaml` exists — `was_flat_config` exists purely so `_stage_archivist_config()` can also stage that deletion, not to drive any content migration. `sync` detects both conditions (no config at all, or a config with no `uuid`) and calls `init.run()` directly rather than reimplementing any of this.
+
+> 📌 The `vaults` field in config is populated by `archivist add` (or `archivist init`'s own containment check, for a module that's a submodule but wasn't added through `archivist add`) when this module is linked into a superproject. Do not prompt for it directly.
 
 ---
 
@@ -264,7 +271,7 @@ New module. Barrel-exported. All registry DB access goes through this module —
 - [x] `git_remote_name`: query `git remote -v` in the target module after git operation completes; find the name associated with this URL; store it; NULL if not found
 - [x] Upsert `modules` row via `register_module()`
 - [x] Insert `module_apparatus` row for the apparatus
-- [x] Bay management: check if current working directory is a registered module via `get_module_by_path(cwd)` — if yes, call `add_module_to_bay(cwd_module_uuid, new_module_uuid)`
+- [x] Bay management: **shipped differently than originally drafted.** Rather than `get_module_by_path(cwd)`, the container is resolved the same UUID-based way `init` and `sync` do it — `resolve_container_module(get_repo_root())`, gated on `is_submodule_context and is_module_registered(module_uuid)` — then `link_module_into_container(container_row, module_uuid, target_path)`. Path-keyed lookup was a trap here for the same reason it's a trap everywhere else in this codebase: it goes stale the moment a directory is renamed or moved, where the config file's own `uuid` doesn't. See `resolve_container_module()`'s docstring.
 - [x] Update `vaults` list in target module's `config.yaml` if superproject is a vault-type module
 - [x] Install git hooks into target module
 - [x] Dry-run: print git command and registration plan; execute neither
@@ -319,27 +326,41 @@ New module. Barrel-exported. All registry DB access goes through this module —
 
 ---
 
-## 9. `archivist migrate` Augmentation
+## 9. `archivist migrate` — Cut
 
-> 🚫 **Blocked on:** `ConfigSchema` (§5) complete.
+> ❌ **Not implemented. This command does not exist.** The original plan called for `archivist migrate` to handle `apparatus` field format migration (`"true"`/`"false"`/name-string → `apparati: list[str]`) and legacy flat-`.archivist`-file eviction as a standalone command. During implementation, both jobs turned out to be strict subsets of what `init`'s "existing config" branch already had to do — see §6's note above for the mechanism (full config rebuild on confirmed update, `was_flat_config` capture before the write). Adding a second command that only ever delegated to the first added a parser, a help entry, and a decision point ("do I run init or migrate?") for zero net capability. It was cut before shipping.
+>
+> If you're implementing against an earlier draft of this checklist and see references to `archivist migrate` elsewhere in this document outside this section, they're being corrected in place rather than left to rot — see §9a, §13.5, §13.6, and the Completion Gates below.
 
-- [x] Detect `apparatus: "true"` in `.archivist/config.yaml` (string, not boolean)
-  - Prompt: "What is the apparatus name for this module? (e.g. 'writing')"
-  - Validate: lowercase, hyphens and alphanumerics only; reject others
-  - Rewrite config: `apparati:\n  - <name>` (plural key, list format)
-  - If registry exists and module not yet registered: register now; insert `module_apparatus` row
-- [x] Detect `apparatus: true` (parsed as Python `bool`)
-  - Same handling as above
-- [x] Detect `apparatus: "false"` or `apparatus: false`
-  - Rewrite config: remove `apparatus` key entirely; no registry changes
-- [x] Detect `apparatus: "<name>"` (string value — v2 format)
-  - Rewrite config: rename key from `apparatus` to `apparati`; convert string value to single-item list
-  - If registry exists: confirm `module_apparatus` row exists; insert if absent
-- [x] Print clear summary of what was changed
+---
 
-> ⚠️ YAML parses `apparatus: true` (no quotes) as Python `bool` `True`, and `apparatus: "true"` (with quotes) as Python `str` `"true"`. Both mean the same thing in the old config format. Both need the same migration treatment. If you only handle the string case, you'll miss repos where the user edited the config without quotes.
+## 9a. `archivist sync` (New Command)
 
-> ⚠️ Validate the apparatus name the user provides. If they type `"Writing"` with a capital W, the apparatus DB will be created as `~/.archivist/Writing.db` — which will not match the lowercase `"writing"` that every other command expects. Normalize to lowercase and hyphens at input time, not at query time.
+> 🚫 **Blocked on:** `registry.py` (§4) and `archivist init` (§6) complete.
+
+Non-interactive registry backfill. `sync` is what `migrate` might have grown into if it had stayed a separate command — but scoped to a different problem than migrate ever solved: modules that already have a *valid, current-format* config (a `uuid`, no legacy flat file) but were never linked into `~/.archivist/`, or whose registry entry has gone stale. Typical triggers: a submodule added by hand with `git submodule add`, bypassing `archivist add` entirely; a vault with nesting older than the containment logic; a directory that got renamed or moved since it was last registered.
+
+- [x] Reads `.archivist` config at the repo root via `read_archivist_config()` + `get_archivist_config_path()`
+- [x] Three non-interactive-resolution failures, each handed off to `init.run(args)` rather than solved here — `sync` never prompts and never invents an apparatus assignment nobody chose:
+  - No config at all → hand off to `init`
+  - Config found at the legacy flat `.archivist` path → hand off to `init`
+  - Config found, directory form, but missing `uuid` → hand off to `init`
+- [x] Otherwise, walks the submodule tree from the repo root **recursively** via `list_direct_submodules()` — any module type, not just vaults, since nesting one module inside another isn't a vault-exclusive privilege
+- [x] Per node (`_sync_node`): if the node has its own config with a `uuid`, calls `_register_or_refresh()`:
+  - Module found in registry, `decimated_at` set → `reactivate_module()`
+  - Module found in registry, active → if the config declares `apparati`, re-runs `register_known_module_with_apparati()` to refresh path/type/remote and pick up any newly-declared apparatus membership; otherwise nothing to do
+  - Module not found in registry, config declares `apparati` → `register_known_module_with_apparati()` (the "known UUID" twin of `register_module_with_apparati()` — writes the UUID the config already declares instead of minting a new one; see `registry.py`'s docstring on why path-based lookup alone is a trap)
+  - Module not found in registry, config declares no `apparati` → reported as skipped; tells the user to run `archivist init` there to decide
+- [x] If registered (or would be, under `--dry-run`), resolves the node's own container via `get_superproject_root()` + `resolve_container_module()` and links into the bay if one is found — every node resolves its own container independently rather than threading one down through the recursion, which is what makes this correct at arbitrary nesting depth
+- [x] Accumulates and reports `(linked_count, skipped_count)` across the whole subtree
+- [x] Registry schema initialized (`init_registry()`) if `~/.archivist/` doesn't exist yet and this isn't a dry run
+- [x] Dry-run: every registry-mutating branch is mirrored with a `[dry-run]` preview line; nothing is written
+
+> 🔴 **`sync` never guesses at an apparatus assignment.** A module with a `uuid` but no `apparati` declared in its own config is reported as skipped, not silently registered standalone or prompted for. Guessing here is exactly the kind of thing that quietly corrupts a registry with associations nobody actually chose — that decision belongs to a human running `init`, not to a recursive tree walk.
+
+> ⚠️ Lookup by UUID, not by path, is load-bearing here — same reasoning as `resolve_container_module()`'s docstring. `register_known_module_with_apparati()` exists specifically because the ordinary `register_module_with_apparati()` has no way to say "trust me, this exact UUID, I got it from the file" — it always resolves existing rows by path, which is a cache, not the module's actual identity.
+
+> 📌 `sync` is deliberately **not** `init`. It never asks a single question. Anything it can't resolve from what's already committed to disk gets reported and skipped, full stop — the fix is to go run `archivist init` there yourself.
 
 ---
 
@@ -368,35 +389,50 @@ New module. Barrel-exported. All registry DB access goes through this module —
 
 ## 11. CLI Parser Updates (`cli.py`)
 
-> 🚫 **Blocked on:** commands (§6, §7, §8) complete enough to wire up.
+> 🚫 **Blocked on:** commands (§6, §7, §8, §9a) complete enough to wire up.
 
-- [x] `archivist add` parser:
+> 📌 **`nargs=argparse.REMAINDER` did not survive contact with reality.** It's gone from the shipped implementation. `add` and `deinit` both accept arbitrary git flags forwarded verbatim to the underlying git command, interleaved with archivist's own flags (`--dry-run`, `--retain`) and — for `add` — a positional `path` that can itself look like a flag's value. `REMAINDER` can't disambiguate any of that; it just grabs everything after the first thing it doesn't recognize, which breaks the moment a git flag appears before the url/path instead of after. The actual solution lives entirely in `cli_helpers.py`, not in per-command parser tweaks — see below.
+- [x] All reusable argparse wiring — the subparser wrapper, `--dry-run`, the commit-sha positional, the note-selection argument group, and the git-passthrough resolution for `add`/`deinit` — now lives in `archivist/utils/cli_helpers.py`, not inline in `cli.py`. `cli.py` composes these helpers; it does not redefine them per-subcommand. See `cli_helpers.py`'s own module docstring: nothing outside `cli.py` should ever import from it.
+- [x] `subparser(subparsers_obj, name, **kwargs)` — thin wrapper around `add_parser()` that defaults `formatter_class` to `ArchivistHelpFormatter` every time, so that's not a kwarg every one of the ~20 subcommands has to remember
+- [x] `add_dry_run(parser, help=...)` — attaches the standard `--dry-run` flag with a sensible default help string, overridable per-subcommand
+- [x] `add_commit_sha_arg(parser)` — attaches the optional `commit_sha` positional shared by `manifest` and every `changelog` subcommand except `seal`
+- [x] `add_note_selection_args(parser, *, require_one=False)` — attaches `--file`, `--path`, `--class`/`-c`, `--class-property`, `--tag` as a group, shared across all `frontmatter` subcommands and `reclassify`
+- [x] `archivist add` parser — real shape, not the originally-drafted one:
   ```python
-  add_p = subparsers.add_parser("add", help="Register a module with the Apparatus.")
-  add_p.add_argument("url", help="Remote URL to clone or add as submodule.")
-  add_p.add_argument("path", nargs="?", help="Local destination path.")
-  add_p.add_argument("passthrough", nargs=argparse.REMAINDER)
-  add_p.add_argument("--dry-run", action="store_true")
+  add_module_p = subparser(subparsers, "add", help = "...", description = "...")
+  add_module_p.add_argument("url", help = "Remote URL to clone or add as a submodule.")
+  add_module_p.add_argument("path", nargs = "?", default = None, metavar = "PATH", help = "...")
+  add_dry_run(add_module_p, help = "...")
   ```
-- [x] `archivist deinit` parser:
+  No `passthrough` argument on the parser at all — `main()` builds `args.passthrough` itself after parsing, via `split_git_passthrough()` (see below).
+- [x] `archivist deinit` parser — same story:
   ```python
-  deinit_p = subparsers.add_parser("deinit", help="Deregister a module from the Apparatus.")
-  deinit_p.add_argument("path", help="Path to the module to remove.")
-  deinit_p.add_argument("passthrough", nargs=argparse.REMAINDER)
-  deinit_p.add_argument("--retain", action="store_true",
-                         help="Registry cleanup only; skip git operation.")
-  deinit_p.add_argument("--dry-run", action="store_true")
+  deinit_p = subparser(subparsers, "deinit", help = "...", description = "...", epilog = fmt_warning(...))
+  deinit_p.add_argument("path", help = "Path to the module to remove.")
+  deinit_p.add_argument("--retain", action = "store_true", help = "...")
+  add_dry_run(deinit_p, help = "...")
   ```
+- [x] Git-flag passthrough resolution — the actual replacement for `REMAINDER`, all in `cli_helpers.py`:
+  - `locate_git_target(tokens)` — finds the token that structurally IS the git target (the url for `add`, the path for `deinit`) by matching git's own disambiguation shape (`scheme://`, `user@host:`, leading `./`, `../`, `~`, or `/`); falls back to the first non-flag token if nothing matches the shape
+  - `split_git_passthrough(tokens)` — splits the tokens following `add`/`deinit` into `(git_passthrough, remainder)`; an explicit `--` short-circuits the shape detection entirely, same as git's own convention
+  - `find_subcommand(argv)` — scans raw `argv` for the subcommand name, skipping past archivist's own known global flags (`--quiet`, `--verbose`, `--log-file`, etc.) along the way, so `--quiet add ...` and plain `add ...` resolve identically regardless of flag placement; bails (returns `None`) rather than guessing wrong on `-h`/`--version`/an unrecognized flag
+  - `main()` calls `find_subcommand()` first; if it identifies `add` or `deinit`, it calls `split_git_passthrough()` on the remainder and sets `args.passthrough = git_passthrough + unrecognized` after `parser.parse_known_args()` runs on the archivist-only remainder
+  - `split_passthrough(argv)` — a much dumber sibling used for every *other* command: splits raw argv on the first literal `--`, before argparse ever sees it, because `REMAINDER` plus a `--` separator plus an optional positional is a combination argparse gets wrong in its own special way
 - [x] `archivist _registry-sync` parser (internal):
   ```python
-  subparsers.add_parser("_registry-sync", help=argparse.SUPPRESS)
+  subparser(subparsers, "_registry-sync", help = argparse.SUPPRESS, description = argparse.SUPPRESS)
   ```
-- [x] Dispatch: add `elif args.command == "add"`, `"deinit"`, `"_registry-sync"` branches
-- [x] Verify `init_p` parser unchanged — no new arguments; registration is fully interactive
+- [x] `archivist sync` parser — new, not in the original plan:
+  ```python
+  sync_p = subparser(subparsers, "sync", help = "...", description = "...")
+  add_dry_run(sync_p, help = "...")
+  ```
+- [x] Dispatch: `elif args.command == "add"`, `"deinit"`, `"sync"`, `"_registry-sync"` branches, each lazily importing its command module (consistent with every other branch — nothing imports a command module at parser-build time)
+- [x] `init_p` parser unchanged from the original plan — no new arguments; registration is fully interactive
 
-> ⚠️ `nargs=argparse.REMAINDER` for `passthrough` captures everything after the last known argument. This means argument ordering matters — `url` and `path` must come before any passthrough args in usage. Document this in the help text. Test with flags like `--depth 1` in the passthrough to confirm they don't get swallowed by argparse's greedy matching.
+> ⚠️ Test the passthrough resolution with flags like `--depth 1` positioned *before* the url/path, not just after — that's the exact case `REMAINDER` couldn't handle and the entire reason `locate_git_target`/`split_git_passthrough` exist. `archivist add --depth 1 git@github.com:user/repo.git modules/repo` must forward `--depth 1` to git, not swallow it into archivist's own `path` positional.
 
-> 📌 Per `CLAUDE.md`: `cli.py` parser definitions are in the "What Not to Touch" category unless adding or removing a subcommand. These additions qualify. Be surgical — add the new parsers without touching the existing ones.
+> 📌 Per `CLAUDE.md`: `cli.py` parser definitions are in the "What Not to Touch" category unless adding or removing a subcommand. These additions qualify. Be surgical — add the new parsers without touching the existing ones. Any *reusable* wiring, though, belongs in `cli_helpers.py`, not copy-pasted inline — see `CODE_CONVENTIONS.md`'s "shared helpers belong in utils" and the barrel-export rule: command modules that need these helpers import them from `archivist.utils.cli_helpers` directly (this one file is the documented exception to the barrel rule, per its own module docstring — it's CLI-parser-only wiring, never imported by anything except `cli.py`).
 
 ---
 
@@ -503,10 +539,11 @@ Before marking Phase 1 done and before opening Phase 2:
 - [x] Unit tests pass without registry fixture: `pytest -m "not integration" -v`
 - [x] No regressions in existing test suite
 - [x] `archivist init` runs cleanly on a fresh directory (no git, no `.archivist/`)
-- [x] `archivist add` and `archivist deinit` are wired in `cli.py` and dispatch correctly
-- [x] `archivist migrate` handles all three `apparatus` field migration cases without error
+- [x] `archivist add`, `archivist deinit`, and `archivist sync` are wired in `cli.py` and dispatch correctly
+- [x] ~~`archivist migrate` handles all three `apparatus` field migration cases without error~~ — command cut; see §9
+- [x] `archivist sync` correctly hands off to `init` for all three non-interactive-resolution failures (no config, legacy flat file, missing uuid) and never invents an apparatus assignment on its own
 - [x] `archivist hooks sync` installs the updated pre-commit hook with registry sync step
-- [ ] Manual smoke test: init a new module; add a submodule; deinit the submodule; registry reflects decimation
+- [x] Manual smoke test: init a new module; add a submodule; deinit the submodule; registry reflects decimation
 
 ---
 
@@ -615,15 +652,13 @@ The current implementation (if written before this section) may be checking `get
   - **Standalone removal** (no superproject context): `remove_all_bays_for_contained()`; `remove_all_apparatus_memberships()`; `decimate_module()`
   - The distinction is about HOW deinit was invoked, not about what's left in the tables after removal
 
-### 13.5 `archivist migrate` Addition
+### 13.5 v2 `apparatus` String Format — Superseded
 
-- [x] Add detection for `apparatus: "<name>"` (string — v2 format): rename key to `apparati`; convert string to single-item list; update registry if present
-- [x] This case is in addition to the `apparatus: "true"` and `apparatus: "false"` cases already handled
-- [x] All three cases must write the new `apparati` key (plural) in the output config, never `apparatus` (singular)
+> ❌ `archivist migrate` doesn't exist (§9). This subsection originally specified dedicated detection for `apparatus: "<name>"` (string — v2 format), on top of the `apparatus: "true"`/`apparatus: "false"` cases. None of that shipped as its own logic. By the time `registry.py` had the `apparati: list[str]` schema (§13.1–13.3) and the registry rebuild (§13.6) had happened, every project's config got rewritten from scratch through `init`'s "existing config → confirm update → rebuild from fresh prompts" path (see §6's note). A project still sitting on a v2 `apparatus: "<name>"` string just gets that field silently dropped and replaced with a correct `apparati` list the next time someone runs `archivist init` and confirms the update — no special-cased string/bool detection required, because `init` was never reading old fields back into the new config in the first place.
 
 ### 13.6 Registry Rebuild
 
-> 📌 The existing registry has one vault and one module. Rebuilding from scratch is faster and cleaner than writing a migration. Do this once. The remedial code changes above ensure that the next `init_registry()` call produces the correct schema, and that re-running `archivist init` or `archivist migrate` re-registers existing modules correctly.
+> 📌 The existing registry has one vault and one module. Rebuilding from scratch is faster and cleaner than writing a migration. Do this once. The remedial code changes above ensure that the next `init_registry()` call produces the correct schema, and that re-running `archivist init` (or, for a module that already has a valid config, `archivist sync`) re-registers existing modules correctly.
 
 - [x] Verify all code changes in §13.1–13.5 are complete and the existing test suite is green
 - [x] Stop any running processes that may hold a connection to `~/.archivist/registry.db`
@@ -635,7 +670,7 @@ The current implementation (if written before this section) may be checking `get
   - This triggers first-run registry setup (mkdir, git init, schema)
   - Walks through apparatus registration with the new `apparati` config field
   - Registers the vault module; inserts `module_apparatus` row
-- [x] From the vault module directory: run `archivist add <library-url>` (or `archivist migrate` if the library is already on disk as a submodule)
+- [x] From the vault module directory: run `archivist add <library-url>` (or `archivist sync` if the library is already on disk as a submodule with a valid config — `archivist init` there directly if it isn't)
   - Re-registers the library module; inserts `module_apparatus` and `module_bays` rows
 - [ ] Verify directly against the rebuilt registry (`archivist remedy inspect` doesn't exist yet — that's Phase 3 §3, and it would just duplicate this check anyway):
   ```python
@@ -668,7 +703,7 @@ These tests build on the `test_registry.py` suite from §12. Add them to that fi
 - [x] Integration: `deinit` standalone removal → `module_apparatus` rows removed; `decimated_at` set
 - [x] `write_archivist_config()` with `apparati: ["writing", "cyber"]` → renders as block sequence
 - [x] `write_archivist_config()` with `apparati: []` → renders as `apparati:\n  []`
-- [x] `migrate` with `apparatus: "writing"` (v2 string) → rewrites to `apparati:\n  - writing`
+- [x] ~~`migrate` with `apparatus: "writing"` (v2 string) → rewrites to `apparati:\n  - writing`~~ — superseded; no `migrate` command exists. Covered instead by an `init` integration test: existing config with a legacy `apparatus: "writing"` field, user confirms update → written config contains `apparati:\n  - writing` and no `apparatus` key
 
 ---
 
@@ -676,9 +711,9 @@ These tests build on the `test_registry.py` suite from §12. Add them to that fi
 
 The original gate had two items still open. They remain open, plus the remedial work:
 
-- [x] `archivist migrate` handles all `apparatus` field migration cases — including the new v2→v3 string→list transition
+- [x] ~~`archivist migrate` handles all `apparatus` field migration cases — including the new v2→v3 string→list transition~~ — superseded; see §13.5. `init`'s config-rebuild-on-update path handles this without dedicated migration logic
 - [x] `archivist hooks sync` installs the updated pre-commit hook with registry sync step
-- [ ] Manual smoke test: init a fresh module; add a submodule to a second apparatus; verify `get_module_apparati()` returns both; deinit the submodule; verify decimation and apparatus membership removal
+- [x] Manual smoke test: init a fresh module; add a submodule to a second apparatus; verify `get_module_apparati()` returns both; deinit the submodule; verify decimation and apparatus membership removal
 - [x] All tests in §12 and §13.7 pass
 - [x] No regressions in the broader test suite (`pytest -v`)
 - [x] `registry.db` schema verified correct: no `apparatus_uuid` column on `modules`; `module_apparatus` table exists

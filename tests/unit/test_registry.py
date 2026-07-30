@@ -1539,17 +1539,45 @@ class TestApparatusMembership:
 class TestPromptApparatusNames:
     """
     Unlike the git+confirm-chain interactive flows in `add` and `migrate`
-    (accepted gaps per REGISTRY_TESTING_SPECIFICATION.md — too much
-    surrounding machinery to isolate cleanly), prompt_apparatus_names() is
-    pure: list_apparatus_names() reads plus input()/print(). No DB writes
-    of its own. That makes it directly unit-testable by faking input() —
-    no need to drag in git_repo, subprocess mocking, or any of that.
+    (accepted gaps per TESTING_SPECIFICATION.md — too much surrounding
+    machinery to isolate cleanly), prompt_apparatus_names() is pure:
+    list_apparatus_names() reads plus input()/print(). No DB writes of its
+    own. That makes it directly unit-testable by faking input() — no need
+    to drag in git_repo, subprocess mocking, or any of that.
+
+    Every test below exercises the numbered-prompt FALLBACK path
+    (_prompt_apparatus_names_fallback), not the curses checkbox screen —
+    see _force_fallback_path below for why, and TESTING_SPECIFICATION.md's
+    Known Gaps for why the checkbox screen itself isn't covered here.
 
     Numbering is alphabetical because list_apparatus_names() sorts
     alphabetically — every test below registers names where that ordering
     is either irrelevant (single apparatus) or deliberately chosen so the
     expected option numbers are unambiguous (e.g. "alpha" before "zeta").
     """
+
+    @pytest.fixture(autouse = True)
+    def _force_fallback_path(self, monkeypatch):
+        """
+        Force curses to None for every test in this class, so
+        prompt_apparatus_names() takes the numbered-prompt fallback
+        deliberately rather than by accident.
+
+        Without this, whether these tests exercise the fallback at all
+        depends entirely on whether curses.wrapper() happens to fail in
+        whatever environment pytest is running in. It reliably does in a
+        headless CI runner (no controlling terminal — that's the
+        `_curses.error: cbreak() returned ERR` you'll see if you strip this
+        fixture and run the suite there) but there's no guarantee of that
+        anywhere else. Run this file from an actual terminal window and
+        curses.wrapper() might well succeed, opening a real checkbox screen
+        that blocks forever on stdscr.getch() waiting for keypresses these
+        tests never send. Setting curses to None sidesteps curses.wrapper()
+        entirely — prompt_apparatus_names() takes its "curses isn't
+        available on this platform" branch straight to the fallback, same
+        codepath, zero terminal dependency, zero chance of a hung test run.
+        """
+        monkeypatch.setattr(registry_module, "curses", None)
 
     @staticmethod
     def _queued_input(monkeypatch, responses: list[str]) -> None:
@@ -1571,14 +1599,21 @@ class TestPromptApparatusNames:
 
         monkeypatch.setattr("builtins.input", _fake_input)
 
-    def test_no_existing_apparati_skips_menu_goes_straight_to_slug_prompt(self, monkeypatch):
+    def test_no_existing_apparati_still_shows_the_menu_with_only_create_new(self, monkeypatch):
         """
-        Nothing registered yet — there's nothing to choose from but "Create
-        new", so don't bother rendering a one-item numbered menu. Same
-        shortcut the old single-select prompt had for this case.
+        Nothing registered yet — the numbered menu still renders, it just
+        has exactly one option: "Create new". There's no more automatic
+        skip straight to the slug prompt; that shortcut denied the "no
+        apparatus" answer, which is now valid even on a cold registry (see
+        the next two tests). Explicitly selecting "1" gets you the same
+        slug prompt the shortcut used to jump to automatically.
         """
         init_registry()
-        self._queued_input(monkeypatch, ["writing", "n"])
+        self._queued_input(monkeypatch, [
+            "1",
+            "writing",
+            "n"
+        ])
         assert prompt_apparatus_names() == ["writing"]
 
     def test_single_existing_apparatus_selected_by_number(self, monkeypatch):
@@ -1596,8 +1631,8 @@ class TestPromptApparatusNames:
 
     def test_multiple_apparati_selected_with_space_separated_numbers(self, monkeypatch):
         init_registry()
-        register_apparatus("writing", git_remote=None)
-        register_apparatus("cyber", git_remote=None)
+        register_apparatus("writing", git_remote = None)
+        register_apparatus("cyber", git_remote = None)
         self._queued_input(monkeypatch, ["1 2", "n"])
         assert set(prompt_apparatus_names()) == {"writing", "cyber"}
 
@@ -1608,17 +1643,24 @@ class TestPromptApparatusNames:
         whatever else was picked in that round too.
         """
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
         # options: 1. writing  2. Create new
         self._queued_input(monkeypatch, ["1, 2", "cyber", "n"])
         assert set(prompt_apparatus_names()) == {"writing", "cyber"}
 
     def test_add_another_apparatus_loops_for_a_second_round(self, monkeypatch):
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
         # Round 1: pick the only existing apparatus by number. Round 2:
-        # nothing left to pick from but "Create new" — straight to slug.
-        self._queued_input(monkeypatch, ["1", "y", "cyber-zine", "n"])
+        # nothing left to pick from but "Create new" — still a real menu
+        # with a real number to select, not an automatic skip.
+        self._queued_input(monkeypatch, [
+            "1",
+            "y",
+            "1",
+            "cyber-zine",
+            "n"
+        ])
         result = prompt_apparatus_names()
         assert result == ["writing", "cyber-zine"], (
             f"Expected ['writing', 'cyber-zine'] in selection order. Got {result!r}."
@@ -1662,27 +1704,67 @@ class TestPromptApparatusNames:
         self._queued_input(monkeypatch, ["9", "1", "n"])
         assert prompt_apparatus_names() == ["writing"]
 
-    def test_empty_input_reprompts(self, monkeypatch):
+    def test_blank_input_on_first_round_returns_empty_list_immediately(self, monkeypatch):
+        """
+        Blank used to be invalid input that forced a reprompt. It isn't
+        anymore — it's the standalone-module answer, and it applies even
+        before anything's been picked. No trailing "n" needed: a blank
+        answer returns immediately, it doesn't fall through to "Add another
+        apparatus?" first.
+        """
         init_registry()
-        register_apparatus("writing", git_remote=None)
-        self._queued_input(monkeypatch, ["", "1", "n"])
-        assert prompt_apparatus_names() == ["writing"]
+        register_apparatus("writing", git_remote = None)
+        self._queued_input(monkeypatch, [""])
+        assert prompt_apparatus_names() == []
+
+    def test_blank_input_on_a_later_round_stops_with_whatever_was_already_picked(self, monkeypatch):
+        """
+        Same "blank means stop" rule applies mid-flow, after a round of
+        real selections — it returns what's already been picked instead of
+        demanding a number or re-asking.
+
+        Menu order is alphabetical (list_apparatus_names() sorts), not
+        registration order — "cyber" sorts before "writing", so option "1"
+        is "cyber" regardless of which one got registered first. Pin that
+        assumption here instead of leaving it implicit and fragile.
+        """
+        init_registry()
+        register_apparatus("writing", git_remote = None)
+        register_apparatus("cyber", git_remote = None)
+        self._queued_input(monkeypatch, ["1", "y", ""])
+        assert prompt_apparatus_names() == ["cyber"]
 
     def test_picking_the_same_number_twice_in_one_line_does_not_duplicate(self, monkeypatch):
         init_registry()
-        register_apparatus("writing", git_remote=None)
+        register_apparatus("writing", git_remote = None)
         self._queued_input(monkeypatch, ["1, 1", "n"])
         assert prompt_apparatus_names() == ["writing"]
 
-    def test_never_returns_empty_list(self, monkeypatch):
+    def test_can_return_empty_list_on_a_cold_registry(self, monkeypatch):
         """
-        An empty selection is not a valid terminal state — the function must
-        keep asking rather than hand back [].
+        The OLD invariant here was "never returns an empty list" — that's
+        inverted now on purpose. A module doesn't have to belong to an
+        Apparatus, and declining is always available, even when there's
+        nothing registered yet to decline.
         """
         init_registry()
-        self._queued_input(monkeypatch, ["solo-apparatus", "n"])
+        self._queued_input(monkeypatch, [""])
+        assert prompt_apparatus_names() == []
+
+    def test_can_return_empty_list_while_declining_real_options(self, monkeypatch):
+        """
+        Same as above, but with an actual apparatus on offer — the user
+        just doesn't want it. Declining a real option is just as valid as
+        declining when there was nothing to decline.
+        """
+        init_registry()
+        register_apparatus("solo-apparatus", git_remote = None)
+        self._queued_input(monkeypatch, [""])
         result = prompt_apparatus_names()
-        assert result, "prompt_apparatus_names() returned an empty list."
+        assert result == [], (
+            f"Expected an empty list — declining is a valid standalone-module "
+            f"answer, not something to keep re-asking about. Got {result!r}."
+        )
 
     def test_invalid_new_slug_reprompts_for_slug_only(self, monkeypatch):
         """
@@ -1690,16 +1772,36 @@ class TestPromptApparatusNames:
         question — it doesn't bounce back out to the main numbered menu.
         """
         init_registry()
-        self._queued_input(monkeypatch, ["Bad Name!", "good-name", "n"])
+        self._queued_input(monkeypatch, [
+            "1",
+            "Bad Name!",
+            "good-name",
+            "n"
+        ])
         assert prompt_apparatus_names() == ["good-name"]
 
     def test_duplicate_new_slug_against_already_selected_reprompts(self, monkeypatch):
         """
         Typing the same name you just created again at a second "Create new"
         round must be rejected and re-prompted, not silently duplicated.
+
+        Note the just-created "writing" isn't written to the DB by this
+        function at all — _prompt_new_apparatus_slug() only checks the
+        in-memory `selected` list, and the actual registry write happens
+        later, in register_module_with_apparati(). So round two's
+        `remaining` is still empty and "1" (Create new) has to be picked
+        again explicitly — it doesn't magically become option "2" just
+        because a name was typed in round one.
         """
         init_registry()
-        self._queued_input(monkeypatch, ["writing", "y", "writing", "new-one", "n"])
+        self._queued_input(monkeypatch, [
+            "1",
+            "writing",
+            "y", "1",
+            "writing",
+            "new-one",
+            "n"
+        ])
         assert prompt_apparatus_names() == ["writing", "new-one"]
 
     def test_full_word_yes_accepted_for_add_another(self, monkeypatch):
@@ -1707,7 +1809,13 @@ class TestPromptApparatusNames:
         convention used everywhere else in this codebase for y/N prompts."""
         init_registry()
         register_apparatus("writing", git_remote=None)
-        self._queued_input(monkeypatch, ["1", "yes", "cyber-zine", "n"])
+        self._queued_input(monkeypatch, [
+            "1",
+            "yes",
+            "1",
+            "cyber-zine",
+            "n"
+        ])
         assert prompt_apparatus_names() == ["writing", "cyber-zine"]
 
 
