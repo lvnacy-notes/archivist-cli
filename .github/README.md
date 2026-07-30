@@ -36,6 +36,8 @@ Archivist is a system-wide CLI tool for bulk-managing YAML frontmatter and gener
 
 Archivist automatically scopes every command to the current git repo or submodule root via `git rev-parse --show-toplevel`. It does not matter where you are in a vault hierarchy — run it from anywhere inside the repo and it finds its footing.
 
+As of the **Apparatus Platform (Phase 1)**, Archivist also knows about every module you've ever pointed it at. A machine-wide registry at `~/.archivist/` tracks modules, the apparati they belong to, and how they're nested inside one another — so `archivist add`, `archivist deinit`, and `archivist sync` can clone, register, deregister, and reconcile modules without you hand-editing config files or crossing your fingers about what's linked to what. See [The Apparatus Registry](#the-apparatus-registry) below.
+
 The `ARCHIVE/` directory in the [LVNACY Apparatus](https://github.com/lvnacy-notes/apparatus-vault-template) serves as the living example and output target for this tool.
 
 ---
@@ -52,11 +54,13 @@ A hidden directory, `.archivist/` at the root of any project Archivist manages, 
 
 ```yaml
 # .archivist
-apparatus: true # true | false
+uuid: 3f9a2b7e-4c1d-4e8a-9b2f-6d5c8e1a0f3b  # always first — this module's identity, registry-wide
 module-type: story  # story | publication | library | vault | general
+apparati:
+  - writing
 ```
 
-This file tells Archivist what kind of project it is dealing with, which drives changelog routing and git hook behavior. Projects without a `.archivist/` directory are ignored by the hooks entirely — Archivist never touches repos it has not been asked to manage.
+`uuid` is the module's actual identity in the Apparatus registry (see below) — not its path, which can be renamed or moved out from under it without warning. `module-type` drives changelog routing and git hook behavior. `apparati` is the list of Apparati this module belongs to; it is a list because a module is allowed to belong to more than one, and it is a list of plain strings, not a `true`/`false`/name-string field — that older format is gone, full stop. Projects without a `.archivist/` directory are ignored by the hooks entirely — Archivist never touches repos it has not been asked to manage.
 
 Additional optional fields:
 
@@ -73,6 +77,18 @@ changelog-output-dir: ARCHIVE/LOGS
 # preserve — Archivist safely round-trips <% %> expressions without touching them
 # false    — Treat <% %> as plain strings. No handling at all.
 templater: preserve
+
+# This module's remote — written automatically by `archivist init` or `archivist add`.
+# git-remote is the clone URL; git-remote-name is the local remote label (origin, upstream,
+# whatever). Don't hand-edit these unless you know exactly what you're doing.
+git-remote: git@github.com:lvnacy-notes/some-story.git
+git-remote-name: origin
+
+# Which vault module(s) currently contain this one, by name — human-readable, not UUIDs.
+# Written by `archivist add` (or init's own containment check) when this module gets
+# linked into a vault. Don't populate this by hand; it's a side effect, not a setting.
+vaults:
+  - main-vault
 
 # Files and directories to exclude from frontmatter and reclassify operations.
 # Standard .gitignore pattern syntax — leading slashes, double-star globs,
@@ -109,6 +125,60 @@ Hooks are installed globally into `~/.git-templates/hooks/` and copied automatic
 > [!warning] Existing Git Hooks Will Be Overwritten!
 > Running `archivist init` will overwrite any existing Git Hooks. Before running this command, backup your hooks and add back the functionality you desire after Archivist has written the hooks needed. Subsequent re-runs of `archivist init` will continue to overwrite hooks, so always maintain a backup.
 
+> [!warning] Upgraded from before the Apparatus Platform? Re-sync your hooks.
+> The pre-commit hook grew a registry-sync step in Phase 1. Existing installs are running the old hook content and Archivist will not silently rewrite it out from under you — that's not how git hooks work and it's not how this tool works either. Run `archivist hooks sync` (per-repo) or `archivist hooks install` (global) after upgrading, or the new module simply never gets its `last_synced_at` timestamp bumped. Nothing breaks. It just quietly does less than it could.
+
+### The Apparatus Registry
+
+A single machine-wide SQLite database at `~/.archivist/registry.db`, plus one additional SQLite file per Apparatus (`~/.archivist/[name].db`). This is where Archivist keeps track of every module it has ever registered, what Apparatus (or Apparati) each one belongs to, and which modules contain which — independent of where anything currently lives on disk.
+
+`~/.archivist/` is itself a git repo (`archivist init` runs `git init` on it the first time it sees your machine), so you can back the whole thing up like anything else you care about.
+
+**Why a registry at all?** Directories get renamed. Vaults get restructured. A module's *path* is a cache, not its identity — its `uuid` is. Every registry lookup that matters resolves by UUID first and refreshes the cached path as a side effect, rather than the other way around. Rename a submodule's folder and the registry does not blink.
+
+**`registry.db` schema:**
+
+```sql
+-- One Apparatus per row. A module can belong to more than one.
+CREATE TABLE apparati (
+    uuid        TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    db_path     TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    git_remote  TEXT
+);
+
+-- One module per row, regardless of type or how many Apparati it's in.
+CREATE TABLE modules (
+    uuid             TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    module_type      TEXT NOT NULL CHECK(module_type IN ('story','publication','library','vault','general')),
+    path             TEXT NOT NULL,
+    git_remote       TEXT,
+    git_remote_name  TEXT,
+    decimated_at     TEXT,   -- deregistered but not forgotten; NULL if still active
+    last_synced_at   TEXT
+);
+
+-- Containment: which module lives inside which. Not limited to vault containers.
+CREATE TABLE module_bays (
+    container_id  TEXT NOT NULL REFERENCES modules(uuid),
+    contained_id  TEXT NOT NULL REFERENCES modules(uuid),
+    PRIMARY KEY (container_id, contained_id)
+);
+
+-- Membership: which module belongs to which Apparatus. Many-to-many, on purpose.
+CREATE TABLE module_apparatus (
+    module_uuid    TEXT NOT NULL REFERENCES modules(uuid),
+    apparatus_uuid TEXT NOT NULL REFERENCES apparati(uuid),
+    PRIMARY KEY (module_uuid, apparatus_uuid)
+);
+```
+
+Modules are never hard-deleted. `archivist deinit` (standalone mode) stamps `decimated_at` rather than dropping the row — history sticks around, and a decimated module can be brought back with `reactivate_module()` if it turns out you deregistered the wrong thing at 1am. Foreign-key enforcement is turned on for every connection this codebase opens; if you're poking at the DB by hand, do the same or SQLite will happily let you write garbage.
+
+Each Apparatus also gets its own DB (`~/.archivist/[name].db`) for cross-module aggregation — `changelogs`, `works`, `authors`, and a `works_authors` junction table. This is **not** the same as the per-project `ARCHIVE/archive.db` covered [below](#archive-db); they're peers serving different layers and neither touches the other.
+
 ---
 
 ## Installation
@@ -134,9 +204,9 @@ $(pyenv which pip) install -e .
 
 The `-e` flag installs in editable mode — edits to source files take effect immediately without reinstalling.
 
-**Requirements:** Python 3.10+, `git` in your `$PATH`.
+**Requirements:** Python 3.10+, `git` in your `$PATH`. Windows folks: the interactive Apparatus checkbox menu (`init`, `add`, `sync`'s handoffs) uses stdlib `curses`, which Windows doesn't ship — run `pip install windows-curses` or you'll get bumped to a plainer numbered-prompt fallback automatically. Either way it works; one's just prettier.
 
-**Dependencies:** `argcomplete`, `pathspec`, and `pyyaml`, installed automatically. The frontmatter commands are stdlib only; `pyyaml` is required by `manifest` and `changelog`; `pathspec` is required by `init` and `migrate`.
+**Dependencies:** `argcomplete`, `pathspec`, and `pyyaml`, installed automatically. The frontmatter commands are stdlib only; `pyyaml` is required by `manifest` and `changelog`; `pathspec` is required by `init`, `add`, `sync`, and `migrate`. The Apparatus registry itself is pure `sqlite3` — stdlib, no new dependency.
 
 ### First-time setup
 
@@ -164,18 +234,24 @@ Interactive project setup. Run once per project — or once per machine after cl
 archivist init
 ```
 
-If no `.archivist/` config directory is found, it walks you through setup:
+If it can't find a git repo where you're standing, it offers to run `git init` for you first — decline, and it exits cleanly rather than dying on you with a stack trace.
 
-1. **Is this an Apparatus project?** Yes / No
-2. If yes: select a module type from the available list
-3. For `library` modules: set the `works-dir` path (where Archivist scans for catalogued works)
-4. Optionally set a custom `changelog-output-dir` to override the default output location
-5. Prompts for Templater expression handling mode (`resolve`, `preserve`, or `false`) and writes it to `.archivist` — see [Templater support](#templater-support) below
-6. Writes `.archivist/config.yaml` to the repo root with an empty `ignores` list — open the file afterward and fill it in
-7. Copies `sample-changelog.py` to `.archivist/`
-8. Installs git hooks locally
+If no `.git` repo exists yet, or no `.archivist/` config directory is found, it walks you through setup:
 
-If `.archivist` already exists, it displays the current config and offers to update it or reinstall hooks.
+1. **First time on this machine?** If `~/.archivist/` doesn't exist yet, it's created now — directory, `git init`, schema, the works. You'll be asked for a registry remote so `~/.archivist/` itself can be backed up and restored on a new machine later. Optional; skip it and set it yourself whenever with `git -C ~/.archivist remote add origin <url>`.
+2. **Is this module part of an Apparatus?** Yes / No — a module doesn't need one to use frontmatter or changelog features.
+3. If yes: select **any number** of existing Apparati, and/or conjure brand-new ones, from an interactive checkbox menu (arrow keys, spacebar, enter). A module belonging to more than one Apparatus is a real, supported case, not an edge case.
+4. Select a module type from the available list (`story`, `publication`, `library`, `vault`, `general`).
+5. For `library` modules: set the `works-dir` path (where Archivist scans for catalogued works).
+6. Optionally set a custom `changelog-output-dir` to override the default output location.
+7. Prompts for Templater expression handling mode (`resolve`, `preserve`, or `false`) and writes it to `.archivist` — see [Templater support](#templater-support) below.
+8. For Apparatus modules: resolves this module's git remote (auto-detected if there's exactly one, prompted for if there are several or none) and writes `git-remote` / `git-remote-name`.
+9. Registers the module in the Apparatus registry (upserting `modules`, `module_apparatus`, and — if this module is itself nested inside a registered container — `module_bays`), and writes `.archivist/config.yaml` to the repo root with `uuid` as the first field and an empty `ignores` list — open the file afterward and fill that in.
+10. Copies `sample-changelog.py` to `.archivist/` for `library` modules.
+11. Stages `.archivist/` (and, if this project just moved off a legacy flat `.archivist` file, stages that deletion in the same breath).
+12. Installs git hooks locally.
+
+If `.archivist` already exists, it displays the current config and offers to update it or reinstall hooks. Confirming an update rebuilds the config from fresh prompts rather than patching it in place — the only thing carried forward from the old config is the existing `uuid`. This is also how a legacy flat `.archivist` file, or an old `apparatus: "true"`/`"<name>"` field from before the registry existed, gets cleaned up: there's no dedicated migration logic for either, because a confirmed re-run of `init` simply never writes the old shape back out.
 
 > ⚠️ **Warning:** `archivist init` **will overwrite any existing git hooks** in the repo's `.git/hooks/` directory without a backup. If you have custom hooks, read every prompt carefully before confirming. Review your existing hooks first with `ls .git/hooks/` and preserve anything you need before proceeding.
 
@@ -352,6 +428,123 @@ slug:     <% tp.frontmatter["title"] %>
 `tp.system`, `tp.user`, `tp.obsidian`, and any expression that requires a running Obsidian instance or user interaction. These are left verbatim with a `⚠️` warning. Switch to `preserve` if your templates rely on them.
 
 **Important:** In `resolve` mode, `apply-template` resolves template default values against the *target note's* context — `tp.file.title` gives you the target note's title, not the template file's. This is the correct behavior.
+
+---
+
+### `archivist add`
+
+Clone a module and register it with the Apparatus, in one shot. Git runs first. If git fails, **nothing** is written to the registry — the module doesn't exist as far as Archivist is concerned until git says it does.
+
+```bash
+archivist add git@github.com:user/repo.git
+archivist add git@github.com:user/repo.git modules/repo
+archivist add --depth 1 git@github.com:user/repo.git modules/repo
+```
+
+No `.git` in your current directory → plain `git clone`. Standing inside a git repo already → `git submodule add`, and the new module gets wired into the current repo's bay if the current repo is itself a registered module.
+
+Any flag Archivist doesn't recognize gets forwarded straight to git, written exactly as you'd type it for git directly — no `--` or `=` gymnastics required. Archivist finds the URL/path by shape (`scheme://`, `user@host:`, or a leading `./`, `../`, `/`, `~` — the same convention git itself uses to disambiguate a repository source from a local path), and treats everything before it as git's problem, not archivist's:
+
+```bash
+archivist add --name custom git@github.com:user/repo.git --dry-run
+```
+
+Prefer to draw the line yourself? A bare `--` right before the URL works too, same as git's own convention:
+
+```bash
+archivist add --depth 1 -- git@github.com:user/repo.git modules/repo
+```
+
+Registration resolves the module's UUID in priority order: reactivates a decimated module if the config already declares one, links an already-active module into the current bay, registers a config-declared-but-unregistered UUID using the config as source of truth, or — if there's no config at all yet — walks you through the same interactive Apparatus registration `archivist init` uses. `git-remote` is stored from the URL you gave it; `git-remote-name` is resolved afterward by querying `git remote -v` inside the freshly-cloned module.
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Print the git command and registration plan without executing either |
+
+Plus any git flags you throw at it, forwarded verbatim.
+
+---
+
+### `archivist deinit`
+
+Deregister a module and remove it from git. **Operation order is non-negotiable: Apparatus cleanup first, git second, always.** Reverse it and a successful git deletion leaves the registry with no way to recover — `config.yaml` is gone, and there's nothing left to reactivate.
+
+```bash
+archivist deinit modules/repo
+archivist deinit --force modules/repo --retain
+archivist deinit modules/repo --dry-run
+```
+
+The confirmation prompt fires **even under `--dry-run`** — a preview that skips the prompt tells you nothing true about what would actually happen, since the prompt itself is part of what happens.
+
+Cleanup behavior depends on context, not on how many bay rows happen to be left over:
+
+- **Vault-context removal** (you're standing inside a registered container of the target): the bay row is removed; the module itself stays active and its other Apparatus memberships are untouched.
+- **Standalone removal** (no superproject context): every bay row and Apparatus membership for the module is stripped, and the module is decimated (`decimated_at` stamped, not deleted — see [The Apparatus Registry](#the-apparatus-registry)).
+
+Any flag Archivist doesn't recognize is forwarded to `git submodule deinit`, same shape-detection dance as `add`:
+
+```bash
+archivist deinit --force -- modules/repo
+```
+
+| Flag | Description |
+|---|---|
+| `--retain` | Registry cleanup only — skip the git operation. For when git already ran (by hand, or in a previous failed attempt) and only the registry needs fixing. |
+| `--dry-run` | Preview the Apparatus changes and git command without executing either. Confirmation prompt still fires. |
+
+Plus any git flags, forwarded verbatim.
+
+---
+
+### `archivist sync`
+
+Non-interactive registry backfill. Walks the submodule tree recursively from wherever you're standing — any module type nests inside any other, this isn't a vaults-only privilege — and makes sure every module already carrying a valid `.archivist/config.yaml` with a `uuid` is registered and correctly linked to its direct container.
+
+```bash
+archivist sync
+archivist sync --dry-run
+```
+
+Reach for this instead of `add`/`init` when:
+
+- You `git submodule add`ed something by hand, bypassing `archivist add` entirely
+- You inherited nesting that predates the registry's containment logic
+- A directory got renamed or moved and its cached registry path has gone stale
+
+`sync` is deliberately **not** `init` — it never asks you a single fucking question. Anything it can't resolve non-interactively from what's already committed to disk gets reported and skipped:
+
+- No config at all, config found at the legacy flat `.archivist` path, or a directory-form config missing its `uuid` → hands off to `archivist init` for that node
+- Config found with a `uuid` but no declared `apparati` → reported as skipped. `sync` will not guess an Apparatus assignment for you; that decision belongs to a human running `init`.
+
+Reports `(linked_count, skipped_count)` for the whole subtree when it's done.
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Preview what would be registered and linked without touching the registry |
+
+---
+
+### `archivist migrate`
+
+One-shot structural migration: legacy flat `.archivist` file → `.archivist/` directory form. Content is not touched — this moves the file, it doesn't rewrite what's in it. (Field-format cleanup, like an old `apparatus` string turning into a proper `apparati` list, is handled separately by re-running `archivist init` and confirming the update — see [that section](#archivist-init).)
+
+```bash
+archivist migrate --dry-run
+archivist migrate
+```
+
+Requires explicit confirmation before deleting the flat file — no backup, no undo outside git. Already on the directory form, or nothing to migrate at all? It says so and exits.
+
+```bash
+git add .archivist/
+git rm --cached .archivist
+git commit -m 'chore: migrate .archivist to directory form'
+```
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Preview the migration plan without writing or deleting anything |
 
 ---
 
